@@ -14,6 +14,30 @@ import { detectReorg, pruneCursorWindow, truncateAbove } from './reorg.js'
 /** Attribute keys the indexer sets itself — a mapper may not override them. */
 const RESERVED_ATTRS = new Set(['eventId', 'contentHash', 'chainId', 'contract', 'event', 'block', 'sync'])
 
+/**
+ * Observability callback payload — what the worker is doing, JSON-safe. Lets a UI/dashboard show the
+ * two sides live (events read from the chain → entities written to Arkiv) and the lag in between.
+ */
+export type IndexerActivity =
+  | {
+      kind: 'source'
+      fromBlock: string
+      toBlock: string
+      count: number
+      events: Array<{ eventId: string; event: string; block: number; tx: string; args: Record<string, string> }>
+    }
+  | { kind: 'write'; op: 'create' | 'update' | 'skip'; eventId: string; block: number; key?: string; txHash?: string }
+  | {
+      kind: 'tick'
+      head: string
+      safeHead: string
+      lastProcessed: string
+      lagBlocks: string
+      processed: number
+      written: number
+      reorged: boolean
+    }
+
 export interface IndexerOptions {
   source: SourceAdapter
   sink: Sink
@@ -48,6 +72,8 @@ export interface IndexerOptions {
   configFingerprint?: string
   /** Consecutive tick failures before the worker gives up (clean stop, no infinite wedge). Default 12. */
   maxConsecutiveFailures?: number
+  /** Optional observability hook — fired with source/write/tick activity (for dashboards/telemetry). */
+  onActivity?: (activity: IndexerActivity) => void
 }
 
 export interface TickResult {
@@ -81,6 +107,7 @@ export class Indexer {
   private readonly endBlock?: bigint
   private readonly configFingerprint?: string
   private readonly maxConsecutiveFailures: number
+  private readonly onActivity?: (a: IndexerActivity) => void
   readonly cursorId: string
 
   private cursor: Cursor | null = null
@@ -108,6 +135,7 @@ export class Indexer {
     this.endBlock = opts.endBlock
     this.configFingerprint = opts.configFingerprint
     this.maxConsecutiveFailures = Math.max(1, opts.maxConsecutiveFailures ?? 12)
+    this.onActivity = opts.onActivity
     this.cursorId = `${opts.source.chainId}-${opts.cursorLabel}`
   }
 
@@ -225,6 +253,24 @@ export class Indexer {
     )
     if (events.length) this.sawEvents = true
 
+    if (this.onActivity && events.length) {
+      this.onActivity({
+        kind: 'source',
+        fromBlock: fromB.toString(),
+        toBlock: toB.toString(),
+        count: events.length,
+        events: events.slice(0, 100).map((e) => ({
+          eventId: e.eventId,
+          event: e.eventName,
+          block: Number(e.blockNumber),
+          tx: e.transactionHash,
+          args: Object.fromEntries(
+            Object.entries(e.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : String(v)]),
+          ),
+        })),
+      })
+    }
+
     const canonical = new Set<string>()
     const records: SinkRecord[] = []
     const removedIds: string[] = []
@@ -273,6 +319,16 @@ export class Indexer {
 
     const upToDate = toB >= safeHead
     const lagBlocks = safeHead > toB ? safeHead - toB : 0n
+    this.onActivity?.({
+      kind: 'tick',
+      head: head.toString(),
+      safeHead: safeHead.toString(),
+      lastProcessed: toB.toString(),
+      lagBlocks: lagBlocks.toString(),
+      processed: events.length,
+      written,
+      reorged,
+    })
     this.maybeHint(upToDate)
     return { head, safeHead, processed: events.length, written, reorged, upToDate, lagBlocks }
   }
@@ -329,6 +385,14 @@ export class Indexer {
     const results = this.sink.writeBatch
       ? await this.sink.writeBatch(records)
       : await sequential(records, (r) => this.sink.write(r))
+    if (this.onActivity) {
+      records.forEach((rec, i) => {
+        const res = results[i]
+        if (!res) return
+        const block = Number(rec.attributes.find((a) => a.key === 'block')?.value ?? 0)
+        this.onActivity!({ kind: 'write', op: res.op, eventId: rec.eventId, block, key: res.key, txHash: res.txHash })
+      })
+    }
     return results.filter((r) => r.op !== 'skip').length
   }
 

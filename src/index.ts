@@ -16,7 +16,7 @@ export {
 } from './config.js'
 
 // Core engine (for programmatic / advanced use).
-export { Indexer, type IndexerOptions, type TickResult } from './core/indexer.js'
+export { Indexer, type IndexerOptions, type TickResult, type IndexerActivity } from './core/indexer.js'
 export { FileCursorStore, MemoryCursorStore } from './core/cursor.js'
 export { detectReorg, pruneCursorWindow, truncateAbove, type ReorgResult } from './core/reorg.js'
 

@@ -8,7 +8,7 @@ import type { SourceChainDef } from './source/chains.js'
 import { ArkivSink } from './sink/arkivSink.js'
 import { createArkivReader, type DecodedEntity } from './sink/arkivQuery.js'
 import { FileCursorStore, MemoryCursorStore } from './core/cursor.js'
-import { Indexer } from './core/indexer.js'
+import { Indexer, type IndexerActivity } from './core/indexer.js'
 
 /**
  * The declarative config — the ONLY thing most users write. Point it at a contract + events,
@@ -68,6 +68,8 @@ export interface IndexerOverrides {
   /** Reuse an already-built source/sink instead of constructing from config (avoids double init). */
   source?: SourceAdapter
   sink?: Sink
+  /** Observability hook — source/write/tick activity (for dashboards/telemetry). */
+  onActivity?: (a: IndexerActivity) => void
 }
 
 function parseEvents(signatures: string[]): AbiEvent[] {
@@ -145,6 +147,7 @@ export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrid
     endBlock: overrides.endBlock,
     maxEventsPerTick: config.source.maxEventsPerTick,
     configFingerprint: computeConfigFingerprint(config),
+    onActivity: overrides.onActivity,
   })
 }
 
