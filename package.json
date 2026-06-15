@@ -18,6 +18,7 @@
     "dist",
     "examples",
     "arkiv.config.example.ts",
+    "AGENTS.md",
     "README.md",
     "LICENSE"
   ],
