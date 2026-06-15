@@ -145,6 +145,12 @@ export interface Cursor {
    * and spans as many ticks as a deep reorg needs.
    */
   reorgRecoverUntil?: bigint
+  /**
+   * Fingerprint of the config this cursor was built for (chainId + contracts + event signatures).
+   * On startup the indexer refuses to reuse a cursor whose fingerprint differs — otherwise changing
+   * the contract/events would silently resume the wrong block range and mix data.
+   */
+  configFingerprint?: string
 }
 
 export interface CursorStore {

@@ -216,7 +216,19 @@ class MemorySink implements Sink {
   }
 }
 
-function makeIndexer(source: MockSource, sink: MemorySink, store: MemoryCursorStore, opts: Partial<{ confirmations: number; reorgWindow: number; fromBlock: number }> = {}) {
+function makeIndexer(
+  source: MockSource,
+  sink: MemorySink,
+  store: MemoryCursorStore,
+  opts: Partial<{
+    confirmations: number
+    reorgWindow: number
+    fromBlock: number
+    maxEventsPerTick: number
+    fetchStepBlocks: number
+    configFingerprint: string
+  }> = {},
+) {
   return new Indexer({
     source,
     sink,
@@ -229,6 +241,9 @@ function makeIndexer(source: MockSource, sink: MemorySink, store: MemoryCursorSt
     reorgWindow: opts.reorgWindow ?? 8,
     fromBlock: opts.fromBlock ?? 0,
     pollIntervalMs: 10,
+    maxEventsPerTick: opts.maxEventsPerTick,
+    fetchStepBlocks: opts.fetchStepBlocks,
+    configFingerprint: opts.configFingerprint,
   })
 }
 
@@ -396,6 +411,47 @@ async function main() {
     // canonical tip event exists
     const tip = eventId(CHAIN_ID, hex32('c:tx:10:0'), 0)
     assert(sink.store.has(tip), 'canonical tip present after deep reorg')
+  })
+
+  // ── maxEventsPerTick caps a busy tick (bounds memory) ──
+  await test('maxEventsPerTick shrinks the range instead of loading everything', async () => {
+    const source = new MockSource()
+    source.build(11, 3, 'a') // 3 events/block, head 10, safeHead 8 → 27 events in range 0..8
+    const sink = new MemorySink()
+    const store = new MemoryCursorStore()
+    const ix = makeIndexer(source, sink, store, { maxEventsPerTick: 4, fetchStepBlocks: 1 })
+    await ix.init()
+    const r1 = await ix.runOnce()
+    assert(r1.processed <= 6, `first tick bounded (got ${r1.processed})`) // ~blocks 0,1 = 6 events, then stop
+    assert(!r1.upToDate, 'not caught up after one capped tick')
+    assert(r1.lagBlocks > 0n, 'reports lag while behind')
+    // Drain the rest in bounded ticks.
+    for (let i = 0; i < 20 && !(await ix.runOnce()).upToDate; i++) {}
+    eq(sink.store.size, 27, 'all 27 events eventually indexed')
+  })
+
+  // ── config fingerprint refusal ──
+  await test('refuses a cursor built for a different config', async () => {
+    const source = new MockSource()
+    source.build(11, 1, 'a')
+    const store = new MemoryCursorStore()
+    const ixA = makeIndexer(source, new MemorySink(), store, { configFingerprint: 'cfg-A' })
+    await ixA.init()
+    await ixA.runOnce()
+    // Reuse the SAME cursor store with a DIFFERENT fingerprint → must refuse.
+    const ixB = makeIndexer(source, new MemorySink(), store, { configFingerprint: 'cfg-B' })
+    let threw = false
+    try {
+      await ixB.init()
+    } catch {
+      threw = true
+    }
+    assert(threw, 'init must throw on a config-mismatched cursor')
+    // Same fingerprint resumes fine.
+    const ixA2 = makeIndexer(source, new MemorySink(), store, { configFingerprint: 'cfg-A' })
+    await ixA2.init()
+    const r = await ixA2.runOnce()
+    eq(r.written, 0, 'same-config resume writes nothing new')
   })
 
   // ── report ──

@@ -164,6 +164,37 @@ export class ArkivSink implements Sink {
     }
   }
 
+  /** ONE paged lookup of OUR existing entities for a sync + block range → Map<eventId,{key,contentHash}>. */
+  private async findExistingByRange(
+    sync: string,
+    fromBlock: number,
+    toBlock: number,
+  ): Promise<Map<string, { key: Hex; contentHash?: string }>> {
+    const predicate = scopeToOwner(
+      `sync = ${quoteValue(sync)} && block >= ${fromBlock} && block <= ${toBlock}`,
+      this.account.address,
+    )
+    const map = new Map<string, { key: Hex; contentHash?: string }>()
+    let cursor: string | undefined
+    do {
+      const res = await this.pub.query(predicate, {
+        includeData: { attributes: true, metadata: false, payload: false },
+        resultsPerPage: 200,
+        cursor,
+      })
+      for (const e of res.entities) {
+        const attrs = (e.attributes ?? []) as Attribute[]
+        const eid = attrs.find((a) => a.key === 'eventId')?.value
+        const ch = attrs.find((a) => a.key === 'contentHash')?.value
+        if (eid != null) {
+          map.set(String(eid), { key: e.key as Hex, contentHash: ch != null ? String(ch) : undefined })
+        }
+      }
+      cursor = res.cursor
+    } while (cursor)
+    return map
+  }
+
   private prepare(record: SinkRecord) {
     const contentType = record.contentType ?? 'application/json'
     const expiresIn = record.expiresInSeconds
@@ -205,12 +236,34 @@ export class ArkivSink implements Sink {
     // so two concurrent writeBatch calls can't both classify the same eventId as a create → no dup.
     await this.runExclusive(async () => {
       const prepared = unique.map((r) => ({ record: r, ...this.prepare(r) }))
-      const existing = await mapLimit(prepared, FIND_CONCURRENCY, (p) => this.findByEventId(p.record.eventId))
+
+      // Existence lookup. Prefer ONE paged range query (sync + block range) over N per-event queries
+      // — the latter would hammer the RPC (429) on a busy tick. Falls back to per-event finds if the
+      // records don't carry the `sync`/`block` system attributes (e.g. a non-indexer caller).
+      const attrOf = (r: SinkRecord, k: string) => r.attributes.find((a) => a.key === k)?.value
+      const syncId = String(attrOf(unique[0]!, 'sync') ?? '')
+      const sameSync = syncId !== '' && unique.every((r) => String(attrOf(r, 'sync') ?? '') === syncId)
+      const blockNums = unique.map((r) => Number(attrOf(r, 'block')))
+      const allBlocks = blockNums.every((n) => Number.isFinite(n))
+
+      let existingMap: Map<string, { key: Hex; contentHash?: string }>
+      if (sameSync && allBlocks) {
+        const lo = blockNums.reduce((a, b) => (b < a ? b : a), blockNums[0]!)
+        const hi = blockNums.reduce((a, b) => (b > a ? b : a), blockNums[0]!)
+        existingMap = await this.findExistingByRange(syncId, lo, hi)
+      } else {
+        existingMap = new Map()
+        const found = await mapLimit(prepared, FIND_CONCURRENCY, (p) => this.findByEventId(p.record.eventId))
+        prepared.forEach((p, i) => {
+          const f = found[i]
+          if (f) existingMap.set(p.record.eventId, f)
+        })
+      }
 
       type Op = { kind: 'create' | 'update'; id: string; params: Record<string, unknown> }
       const ops: Op[] = []
-      prepared.forEach((p, i) => {
-        const ex = existing[i]
+      for (const p of prepared) {
+        const ex = existingMap.get(p.record.eventId)
         if (ex) {
           if (ex.contentHash === p.contentHash) {
             resultById.set(p.record.eventId, { op: 'skip', key: ex.key })
@@ -220,7 +273,7 @@ export class ArkivSink implements Sink {
         } else {
           ops.push({ kind: 'create', id: p.record.eventId, params: { payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
         }
-      })
+      }
 
       for (let start = 0; start < ops.length; start += BATCH_SIZE) {
         const chunk = ops.slice(start, start + BATCH_SIZE)
@@ -283,8 +336,13 @@ export class ArkivSink implements Sink {
       cursor = res.cursor
     } while (cursor)
 
-    for (const key of stale) {
-      await this.runExclusive(() => this.wallet.deleteEntity({ entityKey: key }))
+    // Batch the deletes — one tx per ~50 entities, not one tx per entity (a big reorg could orphan
+    // thousands; serializing thousands of single-delete txs through one nonce would take forever).
+    for (let i = 0; i < stale.length; i += BATCH_SIZE) {
+      const chunk = stale.slice(i, i + BATCH_SIZE)
+      await this.runExclusive(() =>
+        this.wallet.mutateEntities({ deletes: chunk.map((entityKey) => ({ entityKey })) } as MutateEntitiesParameters),
+      )
     }
     if (stale.length) this.log.warn(`reconcile: deleted ${stale.length} orphaned entit(y/ies) in blocks ${fromBlock}-${toBlock}`)
     return stale.length

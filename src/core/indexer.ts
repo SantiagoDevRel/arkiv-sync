@@ -32,10 +32,22 @@ export interface IndexerOptions {
   fromBlock?: bigint | number | 'latest'
   /** How many recent blocks to keep hashes for, to catch reorgs. Default confirmations + 6. */
   reorgWindow?: number
-  /** Max blocks advanced per tick, to bound memory during backfill. Default 5000. */
+  /** Max blocks advanced per tick, to bound the block span during backfill. Default 5000. */
   maxBlocksPerTick?: number
+  /**
+   * HARD cap on events materialized in one tick — bounds memory regardless of block density. When a
+   * tick would exceed it, the block range is SHRUNK (the cursor advances less), never widened.
+   * Default 2000.
+   */
+  maxEventsPerTick?: number
+  /** Block step per getLogs fetch while bounding by events. Default 1000. */
+  fetchStepBlocks?: number
   /** Stop indexing at this block (inclusive). For fixed-range backfills + the smoke. */
   endBlock?: bigint
+  /** Fingerprint of the config (chainId+contracts+events); the cursor is refused if it differs. */
+  configFingerprint?: string
+  /** Consecutive tick failures before the worker gives up (clean stop, no infinite wedge). Default 12. */
+  maxConsecutiveFailures?: number
 }
 
 export interface TickResult {
@@ -48,6 +60,8 @@ export interface TickResult {
   reorged: boolean
   /** True when the cursor reached the safe head (nothing more to do right now). */
   upToDate: boolean
+  /** How many blocks behind the safe head we still are (safeHead − lastProcessed). 0 = caught up. */
+  lagBlocks: bigint
 }
 
 export class Indexer {
@@ -61,8 +75,12 @@ export class Indexer {
   private readonly pollIntervalMs: number
   private readonly reorgWindow: bigint
   private readonly maxBlocksPerTick: bigint
+  private readonly maxEventsPerTick: number
+  private readonly fetchStepBlocks: bigint
   private readonly fromBlock: bigint | number | 'latest'
   private readonly endBlock?: bigint
+  private readonly configFingerprint?: string
+  private readonly maxConsecutiveFailures: number
   readonly cursorId: string
 
   private cursor: Cursor | null = null
@@ -80,11 +98,16 @@ export class Indexer {
     this.cursorStore = opts.cursorStore
     this.log = opts.logger
     this.confirmations = BigInt(opts.confirmations ?? 5)
-    this.pollIntervalMs = opts.pollIntervalMs ?? 12_000
+    // Clamp the poll interval: a literal 0 (which `?? 12000` would NOT catch) hot-loops the RPC.
+    this.pollIntervalMs = Math.max(1000, opts.pollIntervalMs ?? 12_000)
     this.reorgWindow = BigInt(opts.reorgWindow ?? (opts.confirmations ?? 5) + 6)
     this.maxBlocksPerTick = BigInt(opts.maxBlocksPerTick ?? 5000)
+    this.maxEventsPerTick = Math.max(1, opts.maxEventsPerTick ?? 2000)
+    this.fetchStepBlocks = BigInt(Math.max(1, opts.fetchStepBlocks ?? 1000))
     this.fromBlock = opts.fromBlock ?? 'latest'
     this.endBlock = opts.endBlock
+    this.configFingerprint = opts.configFingerprint
+    this.maxConsecutiveFailures = Math.max(1, opts.maxConsecutiveFailures ?? 12)
     this.cursorId = `${opts.source.chainId}-${opts.cursorLabel}`
   }
 
@@ -96,7 +119,23 @@ export class Indexer {
 
     const loaded = await this.cursorStore.load(this.cursorId)
     if (loaded) {
+      // Refuse a cursor built for a different config — otherwise a contract/event change would
+      // silently resume the wrong block range and mix data under the same `sync` id.
+      if (
+        this.configFingerprint &&
+        loaded.configFingerprint &&
+        loaded.configFingerprint !== this.configFingerprint
+      ) {
+        const safe = this.cursorId.replace(/[^a-zA-Z0-9_.-]/g, '_')
+        throw new Error(
+          `Cursor "${this.cursorId}" was built for a DIFFERENT config (contract, events, or chain changed). ` +
+            `Reusing it would resume the wrong block range and mix data.\n` +
+            `  → Delete .arkiv-sync/${safe}.json to re-index from scratch, or set a distinct \`label\` in your config.`,
+        )
+      }
       this.cursor = loaded
+      // Adopt a fingerprint onto a pre-fingerprint cursor (forward-compatible upgrade).
+      if (this.configFingerprint && !loaded.configFingerprint) loaded.configFingerprint = this.configFingerprint
       this.log.info(`resuming ${this.cursorId} from block ${loaded.lastProcessedBlock}`)
     } else {
       let start: bigint
@@ -111,6 +150,7 @@ export class Indexer {
         chainId: this.source.chainId,
         lastProcessedBlock: start - 1n,
         blockHashes: {},
+        configFingerprint: this.configFingerprint,
       }
       this.log.info(`starting ${this.cursorId} at block ${start}`)
     }
@@ -149,10 +189,10 @@ export class Indexer {
     // Idle: nothing safe to (re-)derive and no pending recovery.
     if (safeHead <= cursor.lastProcessedBlock && recoverUntil === undefined) {
       this.maybeHint(true)
-      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: true }
+      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: true, lagBlocks: 0n }
     }
 
-    // 2) Forward range (bounded per tick).
+    // 2) Forward range (bounded per tick by BLOCKS).
     const fromB = cursor.lastProcessedBlock + 1n
     let toB = safeHead
     if (toB - fromB + 1n > this.maxBlocksPerTick) toB = fromB + this.maxBlocksPerTick - 1n
@@ -162,10 +202,24 @@ export class Indexer {
     if (toB < fromB) {
       cursor.reorgRecoverUntil = recoverUntil
       await this.cursorStore.save(this.cursorId, cursor)
-      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: true }
+      const lag = safeHead > cursor.lastProcessedBlock ? safeHead - cursor.lastProcessedBlock : 0n
+      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: true, lagBlocks: lag }
     }
 
-    const events = await this.source.getEvents(fromB, toB)
+    // Fetch stepping through [fromB, toB], STOPPING early if we'd exceed maxEventsPerTick. This
+    // bounds memory by event COUNT (block density is unbounded), SHRINKING the range rather than
+    // widening it — the cursor then advances only to the last fully-fetched block.
+    const events: NormalizedEvent[] = []
+    let effectiveTo = fromB - 1n
+    for (let step = fromB; step <= toB; ) {
+      const end = step + this.fetchStepBlocks - 1n < toB ? step + this.fetchStepBlocks - 1n : toB
+      const chunk = await this.source.getEvents(step, end)
+      for (const e of chunk) events.push(e)
+      effectiveTo = end
+      step = end + 1n
+      if (events.length >= this.maxEventsPerTick) break
+    }
+    toB = effectiveTo
     events.sort((a, b) =>
       a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1,
     )
@@ -205,8 +259,10 @@ export class Indexer {
     cursor.lastProcessedBlock = toB
     const windowStart = toB - this.reorgWindow + 1n
     const lo = windowStart > 0n ? windowStart : 0n
+    // Only fetch headers we don't already have — the window slides, so most are cached from the
+    // prior tick (detectReorg already validated they're still canonical). Bounds RPC per tick.
     const nums: bigint[] = []
-    for (let b = lo; b <= toB; b++) nums.push(b)
+    for (let b = lo; b <= toB; b++) if (cursor.blockHashes[b.toString()] === undefined) nums.push(b)
     const headers = await Promise.all(nums.map((b) => this.source.getBlockHeader(b)))
     nums.forEach((b, i) => {
       const h = headers[i]
@@ -216,8 +272,9 @@ export class Indexer {
     await this.cursorStore.save(this.cursorId, cursor)
 
     const upToDate = toB >= safeHead
+    const lagBlocks = safeHead > toB ? safeHead - toB : 0n
     this.maybeHint(upToDate)
-    return { head, safeHead, processed: events.length, written, reorged, upToDate }
+    return { head, safeHead, processed: events.length, written, reorged, upToDate, lagBlocks }
   }
 
   /** Run until stop() is called. Transient tick errors are logged + retried (zero-friction). */
@@ -225,17 +282,37 @@ export class Indexer {
     await this.init()
     this.stopRequested = false
     let backoff = 1000
+    let failures = 0
+    let lagWarned = false
     this.log.info(`indexing… (poll ${this.pollIntervalMs}ms, ${this.confirmations} confirmations)`)
     while (!this.stopRequested) {
       try {
         const r = await this.runOnce()
         backoff = 1000
+        failures = 0
         if (r.written > 0 || r.reorged) {
           this.log.info(`block ${r.safeHead}: +${r.written} written${r.reorged ? ' (after reorg)' : ''}`)
         }
+        // Lag observability: warn (once) when writes can't keep up with emission.
+        if (r.lagBlocks > this.maxBlocksPerTick * 2n) {
+          if (!lagWarned) {
+            this.log.warn(`falling behind: ${r.lagBlocks} blocks behind the safe head — writes are slower than the chain emits.`)
+            lagWarned = true
+          }
+        } else {
+          lagWarned = false
+        }
         await sleep(r.upToDate ? this.pollIntervalMs : 250)
       } catch (err) {
-        this.log.error(`tick failed, retrying in ${backoff}ms`, scrubSecrets(err))
+        failures++
+        this.log.error(`tick failed (${failures}/${this.maxConsecutiveFailures}), retrying in ${backoff}ms`, scrubSecrets(err))
+        if (failures >= this.maxConsecutiveFailures) {
+          // Don't wedge forever (e.g. an unsplittable dense block or a dead RPC). Stop cleanly so an
+          // orchestrator can restart/intervene instead of an invisible infinite-retry loop.
+          this.log.error(`giving up after ${failures} consecutive failures — stopping. Check the RPC, contract, and config.`)
+          this.stopRequested = true
+          break
+        }
         await sleep(backoff)
         backoff = Math.min(backoff * 2, 30_000)
       }

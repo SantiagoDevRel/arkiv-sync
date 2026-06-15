@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { parseAbiItem, type AbiEvent } from 'viem'
 import type { CursorStore, EventMapper, Hex, Logger, Sink, SourceAdapter } from './types.js'
 import { days } from './time.js'
@@ -34,6 +35,8 @@ export interface ArkivSyncConfig {
     pollIntervalMs?: number
     /** Max blocks per getLogs request (auto-splits on RPC limits). Default 2000. */
     batchSize?: number
+    /** Hard cap on events processed per tick — bounds memory under busy contracts. Default 2000. */
+    maxEventsPerTick?: number
     /** Your own RPC URL(s). If unset, a public pool with rotation is used. */
     rpcUrls?: string[]
   }
@@ -140,7 +143,17 @@ export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrid
     fromBlock: overrides.fromBlock ?? config.source.fromBlock,
     reorgWindow: overrides.reorgWindow,
     endBlock: overrides.endBlock,
+    maxEventsPerTick: config.source.maxEventsPerTick,
+    configFingerprint: computeConfigFingerprint(config),
   })
+}
+
+/** Stable fingerprint of what defines a cursor's data: chain + contracts + event signatures. */
+function computeConfigFingerprint(config: ArkivSyncConfig): string {
+  const chain = typeof config.source.chain === 'string' ? config.source.chain : String(config.source.chain.chain.id)
+  const contracts = normalizeAddresses(config.source.contract).slice().sort()
+  const events = config.source.events.map((s) => s.trim()).slice().sort()
+  return createHash('sha256').update(JSON.stringify({ chain, contracts, events })).digest('hex').slice(0, 16)
 }
 
 export interface QuickCheckResult {

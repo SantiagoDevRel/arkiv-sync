@@ -134,14 +134,22 @@ Scripts: `npm start` · `npm run smoke` · `npm test` · `npm run typecheck` · 
 Verified on this machine (Node 22.22.3), **2026-06-15**:
 
 - ✅ `npm run typecheck` — 0 errors.
-- ✅ `npm test` — 11/11 (time helpers, idempotency/dedup, restart-resume, reorg detection, reorg re-derivation with orphan deletion, reconcile scoped per-sync, deep-reorg, batch path).
+- ✅ `npm test` — 13/13 (time helpers, idempotency/dedup, restart-resume, reorg detection, reorg re-derivation with orphan deletion, reconcile scoped per-sync, deep-reorg, batch path, events-per-tick cap, config-fingerprint refusal).
 - ✅ `npm run smoke` — **live** Sepolia → Arkiv (Braga) → query, real transactions on the burner wallet (`0x6A79…E274`), cost ~1–3 ×10⁻⁸ GLM/event.
 - ✅ **Template final smoke** — `create-arkiv-sync` → `npm install` (packaged tarball) → `npm run verify` indexed a live Sepolia block into Braga and queried it back from the installed package.
 
+### Load & limits (stress-tested by 3 models)
+
+Hardcoded guards (so a busy contract can't crash or wedge the worker):
+- **`maxEventsPerTick`** (default 2000) bounds memory by event COUNT — a dense tick shrinks its block range instead of loading everything → no OOM.
+- **Config-fingerprint refusal** — the worker won't reuse a cursor built for a different contract/events/chain (which would silently mix data); it errors with how to fix.
+- **Min poll interval** (≥1s, so a `0` can't hot-loop), **consecutive-failure cap** (stops cleanly instead of an invisible infinite-retry on a dead RPC / unsplittable dense block), **lag warning** (`lagBlocks` — backpressure is now visible), **bulk existence lookup** (one paged query per tick, not N — avoids 429s), **batched deletes**, **429-vs-range classification**, **header caching** across ticks.
+
 Not verified / known limits:
-- Reorgs **deeper than `reorgWindow`** (default `confirmations + 6`) can leave some orphaned entities below the recorded window until they expire — set `confirmations` above your chain's realistic reorg depth (the default is safe for Sepolia).
+- **Write throughput ceiling ≈ 25 events/sec** — one wallet (single nonce) × ~50 entities per `mutateEntities` tx × Braga ~2s blocks. A contract sustaining more than that lags (it never drops/crashes; the lag is logged). The fix for higher throughput is a **multi-wallet (multi-nonce) pool** — designed-for, not built in v1.
+- A **single block** with more matching logs than an RPC will serve **can't be paginated below one block** — the worker fails with an actionable message (use a dedicated/archive RPC); per-block log pagination is a follow-up.
+- Reorgs **deeper than `reorgWindow`** (default `confirmations + 6`) can leave orphans below the recorded window until they expire — set `confirmations` above your chain's realistic reorg depth (the default is safe for Sepolia).
 - Idempotency assumes the Arkiv query index is consistent shortly after a write (it is, post-confirmation); a crash *mid-tick* plus query lag is the only theoretical double-write window.
-- High-throughput tuning (parallel finds, larger batches) is sized for a reference impl, not max throughput.
 - Multichain beyond Sepolia is designed-for but not yet exercised on another chain.
 
 ## Security

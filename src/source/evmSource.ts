@@ -24,17 +24,25 @@ export interface EvmSourceOptions {
   logger: Logger
 }
 
+/** Is this a rate-limit (429)? Splitting it would AMPLIFY requests — back off + rotate instead. */
+function isRateLimit(err: unknown): boolean {
+  const m = scrubSecrets(err).toLowerCase()
+  return m.includes('429') || m.includes('rate limit') || m.includes('too many requests')
+}
+
 /** Heuristic: does this RPC error mean "your block range / result set is too big"? */
 function isRangeError(err: unknown): boolean {
+  if (isRateLimit(err)) return false // a 429 is NOT a range problem — never recursively split it
   const m = scrubSecrets(err).toLowerCase()
   return (
     m.includes('too large') ||
-    m.includes('range') ||
-    m.includes('limit') ||
+    m.includes('block range') ||
     m.includes('more than') ||
     m.includes('10000') ||
     m.includes('result set') ||
-    m.includes('query returned more')
+    m.includes('query returned more') ||
+    m.includes('response size') ||
+    m.includes('exceed')
   )
 }
 
@@ -149,12 +157,25 @@ export class EvmSource implements SourceAdapter {
         strict: true,
       })) as Log[]
     } catch (err) {
+      if (isRateLimit(err)) {
+        // Surface rate-limits so the caller backs off + the fallback pool rotates — splitting a 429
+        // would multiply requests against an already-throttled endpoint.
+        throw new Error(`RPC rate-limited reading logs ${fromBlock}-${toBlock} — backing off. (${scrubSecrets(err)})`)
+      }
       if (fromBlock < toBlock && isRangeError(err)) {
         const mid = fromBlock + (toBlock - fromBlock) / 2n
         this.log.debug(`range ${fromBlock}-${toBlock} too wide, splitting at ${mid}`)
         const head = await this.getLogsSplit(fromBlock, mid)
         const tail = await this.getLogsSplit(mid + 1n, toBlock)
         return [...head, ...tail]
+      }
+      if (fromBlock === toBlock && isRangeError(err)) {
+        // The "poison-pill" block: one block returns more logs than the RPC will serve, and it can't
+        // be split below a single block. Fail with an actionable message instead of looping forever.
+        throw new Error(
+          `Block ${fromBlock} returns too many logs for this RPC to serve and can't be split below one block. ` +
+            `Use a dedicated/archive RPC (set SEPOLIA_RPC_URL) or narrow the indexed events. (${scrubSecrets(err)})`,
+        )
       }
       throw new Error(`Failed to read logs for blocks ${fromBlock}-${toBlock}: ${scrubSecrets(err)}`)
     }
