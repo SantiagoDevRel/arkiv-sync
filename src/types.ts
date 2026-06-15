@@ -103,8 +103,16 @@ export interface Sink {
    * whose eventId is NOT in `keep` (the canonical set just re-derived). Returns how many were
    * deleted. This is what removes orphaned events after a reorg, at ANY depth. A sink that can't
    * support it (no block-range query) may omit it — the indexer warns that reorg cleanup is limited.
+   *
+   * `scope` narrows deletion to THIS indexer's own records (e.g. `{ sync: cursorId }`), so two
+   * indexers sharing one wallet don't delete each other's entities in an overlapping block range.
    */
-  reconcile?(fromBlock: bigint, toBlock: bigint, keep: Set<string>): Promise<number>
+  reconcile?(
+    fromBlock: bigint,
+    toBlock: bigint,
+    keep: Set<string>,
+    scope?: Record<string, string | number>,
+  ): Promise<number>
   /** Optional: per-write cost accounting summary, for the cost/event metric. */
   costSummary?(): { writes: number; totalWei: bigint } | undefined
 }

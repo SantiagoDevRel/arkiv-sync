@@ -53,7 +53,7 @@ npm run build                 # esbuild → dist/ (+ .d.ts); needed before `npm 
 
 ## Quality gates run (2026-06-15)
 
-Multi-model adversarial gate at Fase 1 (claude + agy; codex added after rate-limit): hardened query-injection/owner-scoping, reorg reconciliation across ticks + deep reorgs, transient-RPC-vs-reorg, atomic delete, sha256 dedup, batched `mutateEntities` writes, bigint coercion, testnet allowlist. All applied + re-verified (typecheck + 10 tests + live smoke + template smoke). See README "Verification" for what is and isn't verified.
+Multi-model adversarial gate, 3 lenses. **claude + agy** (Fase 1): hardened query-injection/owner-scoping, reorg reconciliation across ticks + deep reorgs, transient-RPC-vs-reorg, atomic delete, sha256 dedup, batched `mutateEntities` writes, bigint coercion, testnet allowlist. **codex** (final pass, returned after rate-limit) found 6 more — all applied: (1) reconcile scoped by a `sync` attribute so two indexers sharing a wallet don't delete each other; (2) balanced-paren/quote validation so `||`/`)` can't escape owner scope in `arkivQuery`; (3) detectReorg runs BEFORE the caught-up early return; (4) `contentHash` now covers contentType + expiresIn + typed attributes (full sha256); (5) `writeBatch` dedupes input + runs the whole plan in one write-lock; (6) `BlockNotFoundError` re-checks head to tell a lagging RPC from a real reorg. Re-verified each round: typecheck 0 · **11 unit tests** · live smoke · template smoke. See README "Verification".
 
 ## Dogfooding / friction captured for product
 

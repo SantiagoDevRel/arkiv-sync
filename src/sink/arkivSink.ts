@@ -165,11 +165,12 @@ export class ArkivSink implements Sink {
   }
 
   private prepare(record: SinkRecord) {
-    const contentHash = hashContent(record)
+    const contentType = record.contentType ?? 'application/json'
+    const expiresIn = record.expiresInSeconds
+    const contentHash = hashContent(record, contentType, expiresIn)
     const attributes: Attribute[] = [...record.attributes, { key: 'contentHash', value: contentHash }]
     const payload = jsonToPayload(toJsonObject(record.payload))
-    const contentType = record.contentType ?? 'application/json'
-    return { contentHash, attributes, payload, contentType, expiresIn: record.expiresInSeconds }
+    return { contentHash, attributes, payload, contentType, expiresIn }
   }
 
   async write(record: SinkRecord): Promise<WriteResult> {
@@ -189,49 +190,54 @@ export class ArkivSink implements Sink {
     })
   }
 
-  /** Batched upsert — one transaction per BATCH_SIZE records. */
+  /** Batched upsert — one transaction per BATCH_SIZE records. Atomic + dedup-safe. */
   async writeBatch(records: SinkRecord[]): Promise<WriteResult[]> {
     if (records.length === 0) return []
-    const prepared = records.map((r) => ({ record: r, ...this.prepare(r) }))
 
-    // Existence checks in parallel (bounded), to decide create vs update vs skip.
-    const existing = await mapLimit(prepared, FIND_CONCURRENCY, (p) => this.findByEventId(p.record.eventId))
+    // Dedupe within the batch by eventId (last wins) — getLogs is already unique, but a config
+    // watching overlapping addresses/events could surface the same log twice; never plan it as two creates.
+    const byId = new Map<string, SinkRecord>()
+    for (const r of records) byId.set(r.eventId, r)
+    const unique = [...byId.values()]
+    const resultById = new Map<string, WriteResult>()
 
-    const results = new Array<WriteResult>(records.length)
-    const creates: { idx: number; params: { payload: Uint8Array; contentType: string; expiresIn: number; attributes: Attribute[] } }[] = []
-    const updates: { idx: number; params: { entityKey: Hex; payload: Uint8Array; contentType: string; expiresIn: number; attributes: Attribute[] } }[] = []
+    // Whole plan (existence checks + partition + all chunks) runs in ONE write-lock critical section,
+    // so two concurrent writeBatch calls can't both classify the same eventId as a create → no dup.
+    await this.runExclusive(async () => {
+      const prepared = unique.map((r) => ({ record: r, ...this.prepare(r) }))
+      const existing = await mapLimit(prepared, FIND_CONCURRENCY, (p) => this.findByEventId(p.record.eventId))
 
-    prepared.forEach((p, i) => {
-      const ex = existing[i]
-      if (ex) {
-        if (ex.contentHash === p.contentHash) {
-          results[i] = { op: 'skip', key: ex.key }
+      type Op = { kind: 'create' | 'update'; id: string; params: Record<string, unknown> }
+      const ops: Op[] = []
+      prepared.forEach((p, i) => {
+        const ex = existing[i]
+        if (ex) {
+          if (ex.contentHash === p.contentHash) {
+            resultById.set(p.record.eventId, { op: 'skip', key: ex.key })
+          } else {
+            ops.push({ kind: 'update', id: p.record.eventId, params: { entityKey: ex.key, payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
+          }
         } else {
-          updates.push({ idx: i, params: { entityKey: ex.key, payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
+          ops.push({ kind: 'create', id: p.record.eventId, params: { payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
         }
-      } else {
-        creates.push({ idx: i, params: { payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
+      })
+
+      for (let start = 0; start < ops.length; start += BATCH_SIZE) {
+        const chunk = ops.slice(start, start + BATCH_SIZE)
+        const params: MutateEntitiesParameters = {}
+        const cc = chunk.filter((o) => o.kind === 'create')
+        const cu = chunk.filter((o) => o.kind === 'update')
+        if (cc.length) params.creates = cc.map((o) => o.params as never)
+        if (cu.length) params.updates = cu.map((o) => o.params as never)
+        const r = await this.wallet.mutateEntities(params) // already inside the write lock
+        const txHash = (r as { txHash?: string }).txHash
+        this.writes += chunk.length
+        for (const o of chunk) resultById.set(o.id, { op: o.kind, txHash })
       }
     })
 
-    // Mutate in chunks; each chunk is one transaction (one nonce), serialized via the write lock.
-    const ops = [
-      ...creates.map((c) => ({ kind: 'create' as const, ...c })),
-      ...updates.map((u) => ({ kind: 'update' as const, ...u })),
-    ]
-    for (let start = 0; start < ops.length; start += BATCH_SIZE) {
-      const chunk = ops.slice(start, start + BATCH_SIZE)
-      const params: MutateEntitiesParameters = {}
-      const chunkCreates = chunk.filter((o) => o.kind === 'create')
-      const chunkUpdates = chunk.filter((o) => o.kind === 'update')
-      if (chunkCreates.length) params.creates = chunkCreates.map((o) => o.params as never)
-      if (chunkUpdates.length) params.updates = chunkUpdates.map((o) => o.params as never)
-      const r = await this.runExclusive(() => this.wallet.mutateEntities(params))
-      const txHash = (r as { txHash?: string }).txHash
-      this.writes += chunk.length
-      for (const o of chunk) results[o.idx] = { op: o.kind, txHash }
-    }
-    return results
+    // Align results back to the original input order.
+    return records.map((r) => resultById.get(r.eventId) ?? { op: 'skip' })
   }
 
   async delete(eventIdValue: string): Promise<void> {
@@ -246,10 +252,22 @@ export class ArkivSink implements Sink {
   /**
    * Reorg reconciliation: delete OUR entities in block range [fromBlock,toBlock] whose eventId is
    * not in `keep` (the canonical set just re-derived). Works at any reorg depth — it relies on the
-   * `block` attribute + numeric range query, not on in-memory window state.
+   * `block` attribute + numeric range query, not on in-memory window state. `scope` (e.g.
+   * `{ sync: cursorId }`) narrows deletion to THIS indexer's records, so two indexers sharing one
+   * wallet can't delete each other's entities in an overlapping block range.
    */
-  async reconcile(fromBlock: bigint, toBlock: bigint, keep: Set<string>): Promise<number> {
-    const predicate = scopeToOwner(`block >= ${fromBlock} && block <= ${toBlock}`, this.account.address)
+  async reconcile(
+    fromBlock: bigint,
+    toBlock: bigint,
+    keep: Set<string>,
+    scope?: Record<string, string | number>,
+  ): Promise<number> {
+    let clause = `block >= ${fromBlock} && block <= ${toBlock}`
+    for (const [k, v] of Object.entries(scope ?? {})) {
+      if (!/^[a-zA-Z0-9_]+$/.test(k)) throw new Error(`Invalid scope attribute key "${k}".`)
+      clause += ` && ${k} = ${typeof v === 'number' ? v : quoteValue(String(v))}`
+    }
+    const predicate = scopeToOwner(clause, this.account.address)
     const stale: Hex[] = []
     let cursor: string | undefined
     do {
@@ -296,14 +314,18 @@ export class ArkivSink implements Sink {
   }
 }
 
-/** Deterministic, collision-resistant content fingerprint (sorted-key, sha256) for change detection. */
-function hashContent(record: SinkRecord): string {
-  const attrs = record.attributes
+/**
+ * Full, deterministic content fingerprint to detect real changes. Covers EVERYTHING an Arkiv
+ * update replaces — payload, attributes (type-preserving via stableStringify, so number 1 ≠ string
+ * "1"), contentType, and expiration — so a change to any of them is seen. Full sha256 (no truncation).
+ */
+function hashContent(record: SinkRecord, contentType: string, expiresIn: number): string {
+  const attributes = record.attributes
     .filter((a) => a.key !== 'contentHash')
-    .map((a) => `${a.key}=${a.value}`)
-    .sort()
-  const body = stableStringify(record.payload)
-  return createHash('sha256').update(attrs.join('|') + '::' + body).digest('hex').slice(0, 32)
+    .map((a) => ({ key: a.key, value: a.value }))
+    .sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))
+  const fingerprint = stableStringify({ contentType, expiresIn, attributes, payload: record.payload })
+  return createHash('sha256').update(fingerprint).digest('hex')
 }
 
 /** Ensure payload is a JSON object/array (jsonToPayload expects one). Wrap primitives. */

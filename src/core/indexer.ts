@@ -12,7 +12,7 @@ import { sleep, scrubSecrets } from '../util.js'
 import { detectReorg, pruneCursorWindow, truncateAbove } from './reorg.js'
 
 /** Attribute keys the indexer sets itself — a mapper may not override them. */
-const RESERVED_ATTRS = new Set(['eventId', 'contentHash', 'chainId', 'contract', 'event', 'block'])
+const RESERVED_ATTRS = new Set(['eventId', 'contentHash', 'chainId', 'contract', 'event', 'block', 'sync'])
 
 export interface IndexerOptions {
   source: SourceAdapter
@@ -129,13 +129,10 @@ export class Indexer {
     const head = await this.source.getHeadBlock()
     let safeHead = head - this.confirmations
     if (this.endBlock !== undefined && this.endBlock < safeHead) safeHead = this.endBlock
-    if (safeHead <= cursor.lastProcessedBlock) {
-      this.maybeHint(true)
-      return { head, safeHead, processed: 0, written: 0, reorged: false, upToDate: true }
-    }
-
-    // 1) Reorg check. detectReorg's getBlockHeader THROWS on RPC error (→ tick retried), and returns
-    //    null only for a genuinely absent block — so a blip is never misread as a reorg.
+    // 1) Reorg check FIRST — even when otherwise idle (caught up), so a reorg of already-processed
+    //    blocks is caught promptly (not only once a new block arrives). detectReorg's getBlockHeader
+    //    THROWS on an RPC error (→ tick retried) and returns null only for a genuinely-absent block,
+    //    so a blip is never misread as a reorg.
     let reorged = false
     let recoverUntil = cursor.reorgRecoverUntil
     const reorg = await detectReorg(cursor, (n) => this.source.getBlockHeader(n))
@@ -149,10 +146,24 @@ export class Indexer {
       truncateAbove(cursor, reorg.ancestor)
     }
 
+    // Idle: nothing safe to (re-)derive and no pending recovery.
+    if (safeHead <= cursor.lastProcessedBlock && recoverUntil === undefined) {
+      this.maybeHint(true)
+      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: true }
+    }
+
     // 2) Forward range (bounded per tick).
     const fromB = cursor.lastProcessedBlock + 1n
     let toB = safeHead
     if (toB - fromB + 1n > this.maxBlocksPerTick) toB = fromB + this.maxBlocksPerTick - 1n
+
+    // A pending recovery can persist while there are no new safe blocks yet (e.g. chain hasn't
+    // re-grown). Save the rolled-back cursor + recovery boundary and wait for the next tick.
+    if (toB < fromB) {
+      cursor.reorgRecoverUntil = recoverUntil
+      await this.cursorStore.save(this.cursorId, cursor)
+      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: true }
+    }
 
     const events = await this.source.getEvents(fromB, toB)
     events.sort((a, b) =>
@@ -181,7 +192,8 @@ export class Indexer {
     if (recoverUntil !== undefined) {
       const recoTo = toB < recoverUntil ? toB : recoverUntil
       if (recoTo >= fromB && this.sink.reconcile) {
-        await this.sink.reconcile(fromB, recoTo, canonical)
+        // Scope deletion to THIS indexer's own records (sync = cursorId).
+        await this.sink.reconcile(fromB, recoTo, canonical, { sync: this.cursorId })
       }
       if (toB >= recoverUntil) recoverUntil = undefined
     }
@@ -264,6 +276,9 @@ export class Indexer {
       { key: 'contract', value: e.address },
       { key: 'event', value: e.eventName },
       { key: 'block', value: Number(e.blockNumber) },
+      // Identifies THIS indexer instance, so reorg reconciliation only deletes our own records
+      // (two indexers sharing one wallet must not clobber each other in an overlapping block range).
+      { key: 'sync', value: this.cursorId },
     ]
     for (const [key, raw] of Object.entries(userAttrs)) {
       if (RESERVED_ATTRS.has(key)) {

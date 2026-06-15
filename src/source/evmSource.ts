@@ -107,7 +107,21 @@ export class EvmSource implements SourceAdapter {
       // CRITICAL: only treat a genuinely-absent block as null (a real reorg signal). A transient
       // RPC error must THROW so the caller retries — otherwise a blip is misread as a reorg and we
       // roll back + delete + re-derive for nothing.
-      if (err instanceof BlockNotFoundError) return null
+      if (err instanceof BlockNotFoundError) {
+        // A "not found" can also mean we hit a LAGGING endpoint in the fallback pool that hasn't
+        // synced this block yet. Distinguish: if the block is at/below the chain head it should
+        // exist → genuine absence (reorg signal, null); if it's above this endpoint's head, it's
+        // lag → throw so the caller retries (and the fallback can rotate).
+        try {
+          const currentHead = await this.client.getBlockNumber()
+          if (blockNumber > currentHead) {
+            throw new Error(`getBlockHeader(${blockNumber}): RPC head is ${currentHead} (lagging) — retrying.`)
+          }
+        } catch (headErr) {
+          throw new Error(`getBlockHeader(${blockNumber}) head-check failed: ${scrubSecrets(headErr)}`)
+        }
+        return null
+      }
       throw new Error(`getBlockHeader(${blockNumber}) failed: ${scrubSecrets(err)}`)
     }
   }

@@ -134,7 +134,7 @@ Scripts: `npm start` · `npm run smoke` · `npm test` · `npm run typecheck` · 
 Verified on this machine (Node 22.22.3), **2026-06-15**:
 
 - ✅ `npm run typecheck` — 0 errors.
-- ✅ `npm test` — 10/10 (time helpers, idempotency/dedup, restart-resume, reorg detection, reorg re-derivation with orphan deletion, deep-reorg, batch path).
+- ✅ `npm test` — 11/11 (time helpers, idempotency/dedup, restart-resume, reorg detection, reorg re-derivation with orphan deletion, reconcile scoped per-sync, deep-reorg, batch path).
 - ✅ `npm run smoke` — **live** Sepolia → Arkiv (Braga) → query, real transactions on the burner wallet (`0x6A79…E274`), cost ~1–3 ×10⁻⁸ GLM/event.
 - ✅ **Template final smoke** — `create-arkiv-sync` → `npm install` (packaged tarball) → `npm run verify` indexed a live Sepolia block into Braga and queried it back from the installed package.
 

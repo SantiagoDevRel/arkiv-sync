@@ -181,18 +181,38 @@ class MemorySink implements Sink {
   async delete(id: string) {
     if (this.store.delete(id)) this.deletes++
   }
-  // Reorg reconciliation: delete records in [from,to] (by their `block` attribute) not in `keep`.
-  async reconcile(fromBlock: bigint, toBlock: bigint, keep: Set<string>): Promise<number> {
+  // Reorg reconciliation: delete records in [from,to] (by `block`) not in `keep`, narrowed by `scope`
+  // (e.g. only this indexer's `sync`), mirroring the real ArkivSink.
+  async reconcile(
+    fromBlock: bigint,
+    toBlock: bigint,
+    keep: Set<string>,
+    scope?: Record<string, string | number>,
+  ): Promise<number> {
     let n = 0
     for (const [eventId, { record }] of [...this.store]) {
-      const block = BigInt(Number(record.attributes.find((a) => a.key === 'block')?.value ?? -1))
-      if (block >= fromBlock && block <= toBlock && !keep.has(eventId)) {
+      const attr = (k: string) => record.attributes.find((a) => a.key === k)?.value
+      const block = BigInt(Number(attr('block') ?? -1))
+      if (block < fromBlock || block > toBlock) continue
+      if (scope && !Object.entries(scope).every(([k, v]) => String(attr(k)) === String(v))) continue
+      if (!keep.has(eventId)) {
         this.store.delete(eventId)
         this.deletes++
         n++
       }
     }
     return n
+  }
+
+  /** Inject a foreign record (e.g. from another indexer sharing the wallet) for tests. */
+  inject(eventId: string, attrs: Record<string, string | number>) {
+    const record: SinkRecord = {
+      eventId,
+      attributes: Object.entries(attrs).map(([key, value]) => ({ key, value })),
+      payload: {},
+      expiresInSeconds: 3600,
+    }
+    this.store.set(eventId, { record, hash: this.hash(record) })
   }
 }
 
@@ -340,6 +360,25 @@ async function main() {
     // Block 6 (unchanged, salt a) survives untouched.
     const kept6 = eventId(CHAIN_ID, hex32('a:tx:6:0'), 0)
     assert(sink.store.has(kept6), 'pre-ancestor event untouched')
+  })
+
+  // ── reorg reconcile is scoped to THIS sync (multi-indexer / shared wallet) ──
+  await test('reorg reconcile does not delete another indexer sharing the wallet', async () => {
+    const source = new MockSource()
+    source.build(11, 1, 'a')
+    const sink = new MemorySink()
+    const ix = makeIndexer(source, sink, new MemoryCursorStore()) // cursorId = 11155111-test
+    await ix.init()
+    await ix.runOnce() // index 0..8 (sync = 11155111-test)
+
+    // A SECOND indexer (different sync) wrote an entity at block 8 to the SAME wallet/sink.
+    sink.inject('other:event:8', { eventId: 'other:event:8', block: 8, sync: 'other-sync' })
+
+    source.reorgFrom(7, 13, 1, 'b') // reorg blocks 7+
+    await ix.runOnce()
+
+    assert(!sink.store.has(eventId(CHAIN_ID, hex32('a:tx:8:0'), 0)), 'our own orphan deleted')
+    assert(sink.store.has('other:event:8'), 'the other indexer\'s entity is NOT deleted')
   })
 
   // ── deep reorg (beyond the recorded window) is handled, not crashed ──
