@@ -15,7 +15,7 @@ Seams that keep it swappable: `SourceAdapter` (per-chain reads — `src/source/`
 ## Ground truth (MUTABLE — re-verify at docs.arkiv.network)
 
 - **Sink — Braga:** chainId `60138453102` · GLM · RPC `https://braga.hoodi.arkiv.network/rpc` · faucet `https://braga.hoodi.arkiv.network/faucet/` · explorer `https://explorer.braga.hoodi.arkiv.network`.
-- **Source — Sepolia:** chainId `11155111` · public RPC pool (publicnode / 1rpc / drpc verified live 2026-06-14) with viem `fallback` rotation.
+- **Source — multichain (READ-ONLY):** built-in keys `ethereum`(1) · `sepolia`(11155111) · `base`(8453) · `base-sepolia`(84532) · `bsc`(56) · `bsc-testnet`(97), each with verified keyless RPCs + per-chain `defaultConfirmations` (ETH 24 · Sepolia 6 · Base 40 · BSC 75). **Reading mainnet logs signs nothing → safe; the SINK is always Braga testnet.** Gotcha: BSC `bsc-dataseed*` DISABLE `eth_getLogs` → excluded (use publicnode/1rpc/drpc). `src/source/chains.ts`.
 - **Versions:** `@arkiv-network/sdk ^0.6.8`, `viem ^2.38.2`, **Node 20–22 (NOT 24** — hangs Arkiv updates, sdk-js #14).
 
 ## How to run

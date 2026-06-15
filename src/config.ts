@@ -4,7 +4,7 @@ import type { CursorStore, EventMapper, Hex, Logger, Sink, SourceAdapter } from 
 import { days } from './time.js'
 import { createLogger } from './log.js'
 import { EvmSource } from './source/evmSource.js'
-import type { SourceChainDef } from './source/chains.js'
+import { resolveSourceChain, type SourceChainDef } from './source/chains.js'
 import { ArkivSink } from './sink/arkivSink.js'
 import { createArkivReader, type DecodedEntity } from './sink/arkivQuery.js'
 import { FileCursorStore, MemoryCursorStore } from './core/cursor.js'
@@ -140,7 +140,8 @@ export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrid
     cursorStore: overrides.cursorStore ?? new FileCursorStore(),
     logger,
     cursorLabel: label,
-    confirmations: overrides.confirmations ?? config.source.confirmations,
+    confirmations:
+      overrides.confirmations ?? config.source.confirmations ?? resolveSourceChain(config.source.chain).defaultConfirmations,
     pollIntervalMs: config.source.pollIntervalMs,
     fromBlock: overrides.fromBlock ?? config.source.fromBlock,
     reorgWindow: overrides.reorgWindow,
@@ -188,19 +189,27 @@ export async function quickCheck(
 
   await source.preflight() // needed to scan; the indexer re-checks on init()
   const head = await source.getHeadBlock()
-  const scanBlocks = BigInt(opts.scanBlocks ?? 4000)
-  const maxEvents = opts.maxEvents ?? 8
+  const scanBlocks = BigInt(opts.scanBlocks ?? 800)
+  const maxEvents = opts.maxEvents ?? 50
 
+  // Find a recent block with events. Prefer one with ≤maxEvents (cheap check); but on a BUSY mainnet
+  // contract every block may exceed that — so also remember the least-busy block seen and fall back
+  // to it, so the scan always terminates fast instead of probing thousands of blocks.
   let target: bigint | null = null
+  let leastBusy: { block: bigint; count: number } | null = null
   for (let b = head - 6n; b > head - scanBlocks && b >= 0n; b--) {
     const got = await source.getEvents(b, b)
-    if (got.length >= 1 && got.length <= maxEvents) {
-      target = b
-      break
+    if (got.length >= 1) {
+      if (got.length <= maxEvents) {
+        target = b
+        break
+      }
+      if (!leastBusy || got.length < leastBusy.count) leastBusy = { block: b, count: got.length }
     }
   }
+  if (target === null && leastBusy) target = leastBusy.block
   if (target === null) {
-    return { ok: false, reason: `no matching events in the last ${scanBlocks} blocks — check the contract + event signature`, written: 0, queried: 0, sample: [] }
+    return { ok: false, reason: `no events for this contract + event in the last ${scanBlocks} blocks — check the contract address + event signature`, written: 0, queried: 0, sample: [] }
   }
   logger.info(`quickCheck window: block ${target}`)
 

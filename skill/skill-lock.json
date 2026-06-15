@@ -26,13 +26,15 @@
       "note": "mutable; decommissions ~Sep 2026; sink is a swappable adapter"
     },
     "source": {
-      "name": "sepolia",
-      "chainId": 11155111,
-      "rpcPool": [
-        "https://ethereum-sepolia-rpc.publicnode.com",
-        "https://1rpc.io/sepolia",
-        "https://sepolia.drpc.org"
-      ]
+      "note": "mainnets are READ-ONLY (reading logs signs nothing); the sink stays Braga testnet",
+      "chains": {
+        "ethereum": 1,
+        "sepolia": 11155111,
+        "base": 8453,
+        "base-sepolia": 84532,
+        "bsc": 56,
+        "bsc-testnet": 97
+      }
     }
   },
   "surface": [

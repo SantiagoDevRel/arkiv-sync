@@ -9,7 +9,7 @@ metadata:
   arkiv.sdk-range: ">=0.6.5 <0.7.0"
   arkiv.sdk-verified: "0.6.8"
   arkiv.network-fingerprint: "braga:60138453102"
-  arkiv.source-chains: "sepolia:11155111"
+  arkiv.source-chains: "ethereum:1, sepolia:11155111, base:8453, base-sepolia:84532, bsc:56, bsc-testnet:97 (mainnets are READ-ONLY; sink stays Braga)"
   arkiv.surface: "defineConfig, createIndexer, Indexer, EvmSource, ArkivSink, createArkivReader, days, hours, minutes, NormalizedEvent, EventMapper, viem(getLogs, parseAbiItem, fallback, sepolia), @arkiv-network/sdk(createPublicClient, createWalletClient, privateKeyToAccount, braga, createEntity, updateEntity, deleteEntity, mutateEntities, query)"
   arkiv.last-verified-at: "2026-06-15"
   arkiv.evidence: "engine verified end-to-end on live Sepolia→Braga (smoke) + 10 unit tests (dedup/resume/reorg)"

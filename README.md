@@ -106,7 +106,11 @@ Predicate operators: `=`, `!=`, numeric `>`/`>=`/`<`/`<=`, combined with `&&`/`|
 
 ## Multichain
 
-v1 ships **Sepolia**. To index another EVM chain, pass a chain definition (from `viem/chains`) + `rpcUrls` as `source.chain` instead of `'sepolia'`. The source is an adapter; the core is unchanged. The **sink** is likewise swappable (Braga decommissions ~Sep 2026 — this is a reference implementation + demo + friction sensor, not a mass-onboarding to Braga).
+Built-in source chains (set `source.chain` to one of these keys): **`ethereum`** (1) · **`sepolia`** (11155111) · **`base`** (8453) · **`base-sepolia`** (84532) · **`bsc`** (56) · **`bsc-testnet`** (97). Each ships verified keyless public RPCs (with rotation) + a per-chain reorg-safe `defaultConfirmations` (override via `source.confirmations`). For any other EVM chain, pass a chain definition object (from `viem/chains`) + `rpcUrls` + `defaultConfirmations` instead of a key.
+
+**Mainnets are READ-ONLY here.** Reading a contract's logs signs nothing and spends nothing, so indexing **mainnet** events is safe. The only thing that holds a key is the **sink** — which is always Arkiv/**Braga testnet**. So: source = any chain (mainnet or testnet), sink = Braga. The sink is likewise swappable (Braga decommissions ~Sep 2026 — this is a reference implementation + demo + friction sensor, not a mass-onboarding to Braga).
+
+> RPC notes (verified 2026-06-15): BSC's official `bsc-dataseed*` seeds **disable `eth_getLogs`** (and the bnbchain testnet seed rate-limits it), so they're excluded — publicnode/1rpc/drpc are used. Public endpoints are best-effort; set your own RPC via `source.rpcUrls` for sustained load.
 
 ## Project structure
 
