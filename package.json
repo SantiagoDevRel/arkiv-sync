@@ -1,0 +1,59 @@
+{
+  "name": "arkiv-sync",
+  "version": "0.1.0",
+  "description": "Point it at any smart contract on any EVM chain and turn its on-chain events into a queryable Arkiv database — no RPC, reorg, or gas knowledge required.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "arkiv-sync": "dist/bin/cli.js"
+  },
+  "files": [
+    "dist",
+    "examples",
+    "arkiv.config.example.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "tsx src/bin/cli.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "test": "tsx test/run.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "node build.mjs"
+  },
+  "keywords": [
+    "arkiv",
+    "indexer",
+    "evm",
+    "ethereum",
+    "sepolia",
+    "events",
+    "queryable",
+    "web3",
+    "subgraph",
+    "viem"
+  ],
+  "author": "Santiago (Arkiv DevRel)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20 <24"
+  },
+  "dependencies": {
+    "@arkiv-network/sdk": "^0.6.8",
+    "dotenv": "^17.4.2",
+    "viem": "^2.38.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,20 @@
+# Secrets — NEVER commit. The .env holds a private key.
+.env
+.env.*
+!.env.example
+
+# Local indexer state (cursor + seen-event cache). Safe to delete; rebuilt from chain.
+.arkiv-sync/
+
+# Build output
+dist/
+dist-types/
+*.tgz
+
+# Dependencies
+node_modules/
+
+# Logs / scratch
+*.log
+npm-debug.log*
+.DS_Store

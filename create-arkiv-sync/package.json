@@ -1,0 +1,17 @@
+{
+  "name": "create-arkiv-sync",
+  "version": "0.1.0",
+  "description": "Scaffold a chain→Arkiv indexer in seconds (npm create arkiv-sync).",
+  "type": "module",
+  "bin": {
+    "create-arkiv-sync": "index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "template"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20 <24"
+  }
+}

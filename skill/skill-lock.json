@@ -1,0 +1,67 @@
+{
+  "name": "arkiv-sync",
+  "version": "1.0.0",
+  "title": "Chain → Arkiv Indexer",
+  "oneLiner": "Point at any EVM contract and turn its events into a queryable Arkiv database — reorg-safe, idempotent, resumable.",
+  "teaches": [
+    "indexing EVM events into Arkiv",
+    "declarative contract+event config",
+    "event → entity mapping",
+    "reorg-safe re-derivation",
+    "idempotency by chainId:txHash:logIndex",
+    "querying the derived database",
+    "multichain via source adapters"
+  ],
+  "npm": { "package": "arkiv-sync", "bin": "arkiv-sync" },
+  "sdk": { "package": "@arkiv-network/sdk", "range": ">=0.6.5 <0.7.0", "verified": "0.6.8" },
+  "viem": { "range": "^2.38.2", "note": "direct dependency: the source reads a non-Arkiv chain" },
+  "node": { "range": ">=20 <24", "note": "Node 24 hangs Arkiv entity updates (arkiv-sdk-js #14)" },
+  "network": {
+    "sink": {
+      "name": "braga",
+      "chainId": 60138453102,
+      "rpc": "https://braga.hoodi.arkiv.network/rpc",
+      "faucet": "https://braga.hoodi.arkiv.network/faucet/",
+      "explorer": "https://explorer.braga.hoodi.arkiv.network",
+      "note": "mutable; decommissions ~Sep 2026; sink is a swappable adapter"
+    },
+    "source": {
+      "name": "sepolia",
+      "chainId": 11155111,
+      "rpcPool": [
+        "https://ethereum-sepolia-rpc.publicnode.com",
+        "https://1rpc.io/sepolia",
+        "https://sepolia.drpc.org"
+      ]
+    }
+  },
+  "surface": [
+    "defineConfig",
+    "createIndexer",
+    "Indexer",
+    "EvmSource",
+    "ArkivSink",
+    "createArkivReader",
+    "days",
+    "hours",
+    "minutes",
+    "weeks",
+    "NormalizedEvent",
+    "EventMapper"
+  ],
+  "decides": [
+    "confirmations=5",
+    "reorgWindow=confirmations+6",
+    "TTL default days(30)",
+    "idempotency key chainId:txHash:logIndex",
+    "owner-scoped injection-safe reads",
+    "batched writes (mutateEntities, 50/tx)"
+  ],
+  "messaging": {
+    "lead": "queryable database on Ethereum",
+    "never": ["decentralized database", "trustless", "permanent"],
+    "ai-vertical": "ephemeral coordination state"
+  },
+  "last-verified-at": "2026-06-15",
+  "evidence": "engine verified end-to-end on live Sepolia→Braga (smoke) + 10 unit tests (dedup/resume/reorg)"
+}

@@ -1,0 +1,315 @@
+import { createHash } from 'node:crypto'
+import {
+  createPublicClient,
+  createWalletClient,
+  http,
+  type Attribute,
+  type MutateEntitiesParameters,
+  type QueryOptions,
+} from '@arkiv-network/sdk'
+import { privateKeyToAccount } from '@arkiv-network/sdk/accounts'
+import { braga } from '@arkiv-network/sdk/chains'
+import { jsonToPayload, formatEther } from '@arkiv-network/sdk/utils'
+import type { Hex, Logger, Sink, SinkRecord, WriteResult } from '../types.js'
+import { bigintReplacer, stableStringify, short } from '../util.js'
+import { quoteValue, scopeToOwner } from './predicate.js'
+
+const BRAGA_CHAIN_ID = 60138453102
+const BRAGA_FAUCET = 'https://braga.hoodi.arkiv.network/faucet/'
+const BRAGA_EXPLORER = 'https://explorer.braga.hoodi.arkiv.network'
+const BATCH_SIZE = 50 // entities per mutateEntities transaction
+const FIND_CONCURRENCY = 8 // parallel existence checks
+
+export interface ArkivSinkOptions {
+  /** A 0x + 64-hex testnet private key (from .env). Signs locally; never leaves the machine. */
+  privateKey: string
+  /** Override the Braga RPC. Default = the SDK's verified Braga endpoint. */
+  rpcUrl?: string
+  logger: Logger
+}
+
+/** Allowlist of chain ids this sink may write to (default-deny). Braga + any ARKIV_ALLOW_CHAIN_ID. */
+function allowedChainIds(): Set<number> {
+  const ids = new Set<number>([BRAGA_CHAIN_ID])
+  for (const part of (process.env.ARKIV_ALLOW_CHAIN_ID ?? '').split(',')) {
+    const n = Number(part.trim())
+    if (Number.isInteger(n) && n > 0) ids.add(n)
+  }
+  return ids
+}
+
+function normalizeKey(raw: string): Hex {
+  const k = raw.trim()
+  const withPrefix = k.startsWith('0x') ? k : `0x${k}`
+  if (!/^0x[0-9a-fA-F]{64}$/.test(withPrefix)) {
+    // Never echo the value — it's a private key.
+    throw new Error(
+      'PRIVATE_KEY must be a 32-byte hex key (64 hex chars, optional 0x prefix). ' +
+        'Use a THROWAWAY testnet key funded at the Braga faucet.',
+    )
+  }
+  return withPrefix as Hex
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T, i: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      out[i] = await fn(items[i]!, i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
+/**
+ * Arkiv (Braga) sink. Writes each event as one Arkiv entity. Key properties:
+ *   - Local signing: viem `privateKeyToAccount` — the key never leaves the machine.
+ *   - Testnet-only guard: default-deny allowlist (Braga + ARKIV_ALLOW_CHAIN_ID); never mainnet.
+ *   - Balance preflight: a friendly faucet message instead of a cryptic "insufficient funds".
+ *   - Idempotent upsert keyed by `eventId`, ALWAYS owner-scoped + injection-safe (shared store).
+ *   - Update is full-replace: we send the COMPLETE record every time, so replace is correct.
+ *   - Batched writes (mutateEntities) + reorg reconciliation by block-range query.
+ */
+export class ArkivSink implements Sink {
+  readonly name = 'arkiv:braga'
+  private readonly pub: ReturnType<typeof createPublicClient>
+  private readonly wallet: ReturnType<typeof createWalletClient>
+  private readonly account: ReturnType<typeof privateKeyToAccount>
+  private readonly log: Logger
+  private writes = 0
+  private startBalance = 0n
+  private writeChain: Promise<unknown> = Promise.resolve()
+
+  constructor(opts: ArkivSinkOptions) {
+    const key = normalizeKey(opts.privateKey)
+    this.log = opts.logger
+    this.account = privateKeyToAccount(key)
+    const transport = http(opts.rpcUrl) // undefined → SDK uses Braga's default RPC
+    this.pub = createPublicClient({ chain: braga, transport })
+    this.wallet = createWalletClient({ chain: braga, account: this.account, transport })
+  }
+
+  get address(): Hex {
+    return this.account.address as Hex
+  }
+
+  /**
+   * Serialize every signed write through one queue. The wallet has a single nonce; concurrent
+   * createEntity/updateEntity/mutateEntities calls would otherwise collide on it. Reads are not
+   * serialized.
+   */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(fn, fn)
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
+  async init(): Promise<void> {
+    // Verify the RPC actually serves an allowlisted (Braga) chain BEFORE signing anything.
+    let chainId: number
+    try {
+      chainId = await this.pub.getChainId()
+    } catch (err) {
+      throw new Error(`Couldn't reach the Arkiv (Braga) RPC. (${String((err as Error).message)})`)
+    }
+    if (!allowedChainIds().has(chainId)) {
+      throw new Error(
+        `The Arkiv RPC reports chainId ${chainId}, which is not allowlisted (default Braga ${BRAGA_CHAIN_ID}). ` +
+          `Arkiv Sync is testnet-only — set ARKIV_ALLOW_CHAIN_ID for another testnet, never a mainnet.`,
+      )
+    }
+
+    const balance = await this.pub.getBalance({ address: this.account.address })
+    this.startBalance = balance
+    if (balance === 0n) {
+      throw new Error(
+        `Wallet ${this.address} has 0 GLM on Braga, so it can't write.\n` +
+          `  → Fund this address at the faucet: ${BRAGA_FAUCET}\n` +
+          `  → Then run the command again. (This key is a throwaway testnet burner.)`,
+      )
+    }
+    const glm = Number(formatEther(balance))
+    if (glm < 0.01) {
+      this.log.warn(
+        `wallet ${short(this.address)} balance is low (${glm} GLM). Top up at ${BRAGA_FAUCET} if writes start failing.`,
+      )
+    }
+    this.log.info(`sink ready: ${this.name}, wallet ${short(this.address)}, balance ${glm} GLM`)
+  }
+
+  /** Find OUR entity (owner-scoped, injection-safe) carrying this eventId. */
+  private async findByEventId(
+    eventIdValue: string,
+  ): Promise<{ key: Hex; contentHash: string | undefined } | null> {
+    const predicate = scopeToOwner(`eventId = ${quoteValue(eventIdValue)}`, this.account.address)
+    const options: QueryOptions = {
+      includeData: { attributes: true, metadata: false, payload: false },
+      resultsPerPage: 1,
+    }
+    const res = await this.pub.query(predicate, options)
+    const entity = res.entities[0]
+    if (!entity) return null
+    const attrs = (entity.attributes ?? []) as Attribute[]
+    const contentHash = attrs.find((a) => a.key === 'contentHash')?.value
+    return {
+      key: entity.key as Hex,
+      contentHash: contentHash != null ? String(contentHash) : undefined,
+    }
+  }
+
+  private prepare(record: SinkRecord) {
+    const contentHash = hashContent(record)
+    const attributes: Attribute[] = [...record.attributes, { key: 'contentHash', value: contentHash }]
+    const payload = jsonToPayload(toJsonObject(record.payload))
+    const contentType = record.contentType ?? 'application/json'
+    return { contentHash, attributes, payload, contentType, expiresIn: record.expiresInSeconds }
+  }
+
+  async write(record: SinkRecord): Promise<WriteResult> {
+    const { contentHash, attributes, payload, contentType, expiresIn } = this.prepare(record)
+    return this.runExclusive(async () => {
+      const existing = await this.findByEventId(record.eventId)
+      if (existing) {
+        if (existing.contentHash === contentHash) return { op: 'skip', key: existing.key }
+        // Arkiv update = full-replace; we pass the COMPLETE new state, so replace is correct.
+        const r = await this.wallet.updateEntity({ entityKey: existing.key, payload, contentType, attributes, expiresIn })
+        this.writes++
+        return { op: 'update', key: r.entityKey as string, txHash: r.txHash as string }
+      }
+      const r = await this.wallet.createEntity({ payload, contentType, attributes, expiresIn })
+      this.writes++
+      return { op: 'create', key: r.entityKey as string, txHash: r.txHash as string }
+    })
+  }
+
+  /** Batched upsert — one transaction per BATCH_SIZE records. */
+  async writeBatch(records: SinkRecord[]): Promise<WriteResult[]> {
+    if (records.length === 0) return []
+    const prepared = records.map((r) => ({ record: r, ...this.prepare(r) }))
+
+    // Existence checks in parallel (bounded), to decide create vs update vs skip.
+    const existing = await mapLimit(prepared, FIND_CONCURRENCY, (p) => this.findByEventId(p.record.eventId))
+
+    const results = new Array<WriteResult>(records.length)
+    const creates: { idx: number; params: { payload: Uint8Array; contentType: string; expiresIn: number; attributes: Attribute[] } }[] = []
+    const updates: { idx: number; params: { entityKey: Hex; payload: Uint8Array; contentType: string; expiresIn: number; attributes: Attribute[] } }[] = []
+
+    prepared.forEach((p, i) => {
+      const ex = existing[i]
+      if (ex) {
+        if (ex.contentHash === p.contentHash) {
+          results[i] = { op: 'skip', key: ex.key }
+        } else {
+          updates.push({ idx: i, params: { entityKey: ex.key, payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
+        }
+      } else {
+        creates.push({ idx: i, params: { payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
+      }
+    })
+
+    // Mutate in chunks; each chunk is one transaction (one nonce), serialized via the write lock.
+    const ops = [
+      ...creates.map((c) => ({ kind: 'create' as const, ...c })),
+      ...updates.map((u) => ({ kind: 'update' as const, ...u })),
+    ]
+    for (let start = 0; start < ops.length; start += BATCH_SIZE) {
+      const chunk = ops.slice(start, start + BATCH_SIZE)
+      const params: MutateEntitiesParameters = {}
+      const chunkCreates = chunk.filter((o) => o.kind === 'create')
+      const chunkUpdates = chunk.filter((o) => o.kind === 'update')
+      if (chunkCreates.length) params.creates = chunkCreates.map((o) => o.params as never)
+      if (chunkUpdates.length) params.updates = chunkUpdates.map((o) => o.params as never)
+      const r = await this.runExclusive(() => this.wallet.mutateEntities(params))
+      const txHash = (r as { txHash?: string }).txHash
+      this.writes += chunk.length
+      for (const o of chunk) results[o.idx] = { op: o.kind, txHash }
+    }
+    return results
+  }
+
+  async delete(eventIdValue: string): Promise<void> {
+    // find + delete INSIDE the lock so the read-then-delete is atomic w.r.t. concurrent writes.
+    await this.runExclusive(async () => {
+      const existing = await this.findByEventId(eventIdValue)
+      if (!existing) return
+      await this.wallet.deleteEntity({ entityKey: existing.key })
+    })
+  }
+
+  /**
+   * Reorg reconciliation: delete OUR entities in block range [fromBlock,toBlock] whose eventId is
+   * not in `keep` (the canonical set just re-derived). Works at any reorg depth — it relies on the
+   * `block` attribute + numeric range query, not on in-memory window state.
+   */
+  async reconcile(fromBlock: bigint, toBlock: bigint, keep: Set<string>): Promise<number> {
+    const predicate = scopeToOwner(`block >= ${fromBlock} && block <= ${toBlock}`, this.account.address)
+    const stale: Hex[] = []
+    let cursor: string | undefined
+    do {
+      const res = await this.pub.query(predicate, {
+        includeData: { attributes: true, metadata: false, payload: false },
+        resultsPerPage: 100,
+        cursor,
+      })
+      for (const e of res.entities) {
+        const eid = (e.attributes ?? []).find((a: Attribute) => a.key === 'eventId')?.value
+        if (eid != null && !keep.has(String(eid))) stale.push(e.key as Hex)
+      }
+      cursor = res.cursor
+    } while (cursor)
+
+    for (const key of stale) {
+      await this.runExclusive(() => this.wallet.deleteEntity({ entityKey: key }))
+    }
+    if (stale.length) this.log.warn(`reconcile: deleted ${stale.length} orphaned entit(y/ies) in blocks ${fromBlock}-${toBlock}`)
+    return stale.length
+  }
+
+  /** Live balance — used by the cost/event metric and the smoke. */
+  async balance(): Promise<bigint> {
+    return this.pub.getBalance({ address: this.account.address })
+  }
+
+  costSummary() {
+    return { writes: this.writes, totalWei: 0n }
+  }
+
+  /** GLM spent since init + per-write average, for the cost/event metric. */
+  async spendReport(): Promise<{ spentGlm: number; writes: number; perWriteGlm: number }> {
+    const now = await this.balance()
+    // Clamp: if the wallet was topped up mid-run, don't report a negative/garbage spend.
+    const spentWei = this.startBalance > now ? this.startBalance - now : 0n
+    const spentGlm = Number(formatEther(spentWei))
+    const perWriteGlm = this.writes > 0 ? spentGlm / this.writes : 0
+    return { spentGlm, writes: this.writes, perWriteGlm }
+  }
+
+  static explorerTx(txHash: string): string {
+    return `${BRAGA_EXPLORER}/tx/${txHash}`
+  }
+}
+
+/** Deterministic, collision-resistant content fingerprint (sorted-key, sha256) for change detection. */
+function hashContent(record: SinkRecord): string {
+  const attrs = record.attributes
+    .filter((a) => a.key !== 'contentHash')
+    .map((a) => `${a.key}=${a.value}`)
+    .sort()
+  const body = stableStringify(record.payload)
+  return createHash('sha256').update(attrs.join('|') + '::' + body).digest('hex').slice(0, 32)
+}
+
+/** Ensure payload is a JSON object/array (jsonToPayload expects one). Wrap primitives. */
+function toJsonObject(payload: unknown): object {
+  if (payload && typeof payload === 'object') {
+    return JSON.parse(JSON.stringify(payload, bigintReplacer))
+  }
+  return { value: payload }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "my-arkiv-sync",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx start.ts",
+    "verify": "tsx verify.ts"
+  },
+  "dependencies": {
+    "arkiv-sync": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20 <24"
+  }
+}
