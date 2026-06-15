@@ -28,12 +28,16 @@ export interface ArkivSinkOptions {
   logger: Logger
 }
 
-/** Allowlist of chain ids this sink may write to (default-deny). Braga + any ARKIV_ALLOW_CHAIN_ID. */
+/** Well-known mainnet chain ids — the sink NEVER writes to these, even if listed in the env. */
+const KNOWN_MAINNETS = new Set([1, 10, 56, 100, 137, 250, 8453, 42161, 43114, 59144, 534352])
+
+/** Allowlist of chain ids this sink may write to (default-deny). Braga + any ARKIV_ALLOW_CHAIN_ID,
+ *  but a known mainnet is ALWAYS rejected (absolute "never sign on mainnet" guard). */
 function allowedChainIds(): Set<number> {
   const ids = new Set<number>([BRAGA_CHAIN_ID])
   for (const part of (process.env.ARKIV_ALLOW_CHAIN_ID ?? '').split(',')) {
     const n = Number(part.trim())
-    if (Number.isInteger(n) && n > 0) ids.add(n)
+    if (Number.isInteger(n) && n > 0 && !KNOWN_MAINNETS.has(n)) ids.add(n) // never a known mainnet
   }
   return ids
 }

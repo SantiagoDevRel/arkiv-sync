@@ -103,7 +103,7 @@ function buildSource(config: ArkivSyncConfig, logger: Logger): EvmSource {
     chain: config.source.chain,
     addresses: normalizeAddresses(config.source.contract),
     events: parseEvents(config.source.events),
-    rpcUrls: config.source.rpcUrls ?? envRpcUrls(),
+    rpcUrls: config.source.rpcUrls ?? envRpcUrls(resolveSourceChain(config.source.chain).key),
     batchSize: config.source.batchSize,
     logger,
   })
@@ -251,8 +251,13 @@ export async function quickCheck(
   }
 }
 
-/** Pull a single Sepolia RPC override from env (the rest of the pool still applies as fallback). */
-function envRpcUrls(): string[] | undefined {
-  const url = process.env.SEPOLIA_RPC_URL
+/**
+ * Per-chain RPC override from env: `<CHAIN>_RPC_URL` (e.g. BASE_RPC_URL, BSC_TESTNET_RPC_URL,
+ * SEPOLIA_RPC_URL) or a generic SOURCE_RPC_URL. Chain-scoped so a SEPOLIA_RPC_URL doesn't get
+ * (mis)applied when indexing Base/BSC. If unset, the chain's public pool (with rotation) is used.
+ */
+function envRpcUrls(chainKey: string): string[] | undefined {
+  const perChain = process.env[`${chainKey.toUpperCase().replace(/-/g, '_')}_RPC_URL`]
+  const url = perChain || process.env.SOURCE_RPC_URL
   return url ? [url] : undefined
 }

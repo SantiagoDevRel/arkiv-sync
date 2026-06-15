@@ -15,7 +15,7 @@ export interface SourceChainDef {
   key: string
   chain: Chain
   defaultRpcUrls: string[]
-  /** Blocks to stay behind the head before treating data as final (reorg safety). */
+  /** Blocks to stay behind the head before treating data as safe/confirmed (reorg safety; not full economic finality). */
   defaultConfirmations: number
   /** True for mainnets — read-only here; surfaced so the UI/logs can label it. */
   isMainnet: boolean
@@ -61,7 +61,7 @@ export const SOURCE_CHAINS: Record<string, SourceChainDef> = {
   bsc: {
     key: 'bsc',
     chain: bsc, // 56 (PoSA) — bsc-dataseed seeds DISABLE eth_getLogs, so they're NOT used here
-    defaultRpcUrls: ['https://bsc-rpc.publicnode.com', 'https://1rpc.io/bnb', 'https://bsc.drpc.org'],
+    defaultRpcUrls: ['https://bsc-rpc.publicnode.com', 'https://public.1rpc.io/bnb', 'https://bsc.drpc.org'],
     defaultConfirmations: 75, // sub-second blocks + PoSA can reorg deeper — stay well back
     isMainnet: true,
   },
