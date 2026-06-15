@@ -7,6 +7,7 @@ import type {
   Sink,
   SinkRecord,
   SourceAdapter,
+  WriteProgress,
 } from '../types.js'
 import { sleep, scrubSecrets } from '../util.js'
 import { detectReorg, pruneCursorWindow, truncateAbove } from './reorg.js'
@@ -26,6 +27,7 @@ export type IndexerActivity =
       count: number
       events: Array<{ eventId: string; event: string; block: number; tx: string; args: Record<string, string> }>
     }
+  | { kind: 'writing'; count: number } // about to write `count` records — UI shows a "writing…" state
   | { kind: 'write'; op: 'create' | 'update' | 'skip'; eventId: string; block: number; key?: string; txHash?: string }
   | {
       kind: 'tick'
@@ -382,15 +384,31 @@ export class Indexer {
 
   private async writeRecords(records: SinkRecord[]): Promise<number> {
     if (records.length === 0) return 0
-    const results = this.sink.writeBatch
-      ? await this.sink.writeBatch(records)
-      : await sequential(records, (r) => this.sink.write(r))
+    // Stream writes LIVE (per batch as each tx commits) so a UI doesn't look frozen during the
+    // signing window, and the write rate is real-time rather than one burst at the end.
+    let onWritten: WriteProgress | undefined
+    let blockOf: Map<string, number> | undefined
+    const emittedIds = new Set<string>()
     if (this.onActivity) {
+      blockOf = new Map(records.map((r) => [r.eventId, Number(r.attributes.find((a) => a.key === 'block')?.value ?? 0)]))
+      this.onActivity({ kind: 'writing', count: records.length })
+      onWritten = (w) => {
+        emittedIds.add(w.eventId)
+        this.onActivity!({ kind: 'write', op: w.op, eventId: w.eventId, block: blockOf!.get(w.eventId) ?? 0, key: w.key, txHash: w.txHash })
+      }
+    }
+    const results = this.sink.writeBatch
+      ? await this.sink.writeBatch(records, onWritten)
+      : await sequential(records, (r) => this.sink.write(r, onWritten))
+    // Backfill: emit a write activity for any record the sink did NOT stream via onWritten (sinks
+    // that ignore the callback, or deduped positions) — guarantees exactly one write activity per record.
+    if (this.onActivity && blockOf) {
       records.forEach((rec, i) => {
+        if (emittedIds.has(rec.eventId)) return
         const res = results[i]
         if (!res) return
-        const block = Number(rec.attributes.find((a) => a.key === 'block')?.value ?? 0)
-        this.onActivity!({ kind: 'write', op: res.op, eventId: rec.eventId, block, key: res.key, txHash: res.txHash })
+        emittedIds.add(rec.eventId)
+        this.onActivity!({ kind: 'write', op: res.op, eventId: rec.eventId, block: blockOf!.get(rec.eventId) ?? 0, key: res.key, txHash: res.txHash })
       })
     }
     return results.filter((r) => r.op !== 'skip').length

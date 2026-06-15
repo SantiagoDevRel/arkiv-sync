@@ -12,7 +12,7 @@ import type {
   SourceAdapter,
   WriteResult,
 } from '../src/types.js'
-import { Indexer } from '../src/core/indexer.js'
+import { Indexer, type IndexerActivity } from '../src/core/indexer.js'
 import { MemoryCursorStore } from '../src/core/cursor.js'
 import { detectReorg } from '../src/core/reorg.js'
 import { silentLogger } from '../src/log.js'
@@ -227,6 +227,7 @@ function makeIndexer(
     maxEventsPerTick: number
     fetchStepBlocks: number
     configFingerprint: string
+    onActivity: (a: IndexerActivity) => void
   }> = {},
 ) {
   return new Indexer({
@@ -244,6 +245,7 @@ function makeIndexer(
     maxEventsPerTick: opts.maxEventsPerTick,
     fetchStepBlocks: opts.fetchStepBlocks,
     configFingerprint: opts.configFingerprint,
+    onActivity: opts.onActivity,
   })
 }
 
@@ -452,6 +454,22 @@ async function main() {
     await ixA2.init()
     const r = await ixA2.runOnce()
     eq(r.written, 0, 'same-config resume writes nothing new')
+  })
+
+  // ── activity streaming: writing + exactly one write per event (backfill for non-streaming sinks) ──
+  await test('emits writing + exactly one write activity per event', async () => {
+    const source = new MockSource()
+    source.build(11, 2, 'a') // 2 events/block → blocks 0..8 = 18 events at confirmations 2
+    const sink = new MemorySink() // does NOT call onWritten → exercises the indexer's backfill
+    const acts: IndexerActivity[] = []
+    const ix = makeIndexer(source, sink, new MemoryCursorStore(), { onActivity: (a) => acts.push(a) })
+    await ix.init()
+    const r = await ix.runOnce()
+    const writes = acts.filter((a) => a.kind === 'write')
+    const writings = acts.filter((a) => a.kind === 'writing')
+    eq(writes.length, r.processed, 'one write activity per processed event')
+    assert(writings.length >= 1, 'a writing activity fired')
+    eq(new Set(writes.map((w) => (w as { eventId: string }).eventId)).size, writes.length, 'no duplicate write activities')
   })
 
   // ── report ──

@@ -50,6 +50,7 @@ export type {
   SinkRecord,
   WriteResult,
   WriteOp,
+  WriteProgress,
   EventMapper,
   MappedEntity,
   Cursor,

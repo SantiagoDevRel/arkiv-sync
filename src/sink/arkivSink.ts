@@ -10,7 +10,7 @@ import {
 import { privateKeyToAccount } from '@arkiv-network/sdk/accounts'
 import { braga } from '@arkiv-network/sdk/chains'
 import { jsonToPayload, formatEther } from '@arkiv-network/sdk/utils'
-import type { Hex, Logger, Sink, SinkRecord, WriteResult } from '../types.js'
+import type { Hex, Logger, Sink, SinkRecord, WriteProgress, WriteResult } from '../types.js'
 import { bigintReplacer, stableStringify, short } from '../util.js'
 import { quoteValue, scopeToOwner } from './predicate.js'
 
@@ -208,25 +208,32 @@ export class ArkivSink implements Sink {
     return { contentHash, attributes, payload, contentType, expiresIn }
   }
 
-  async write(record: SinkRecord): Promise<WriteResult> {
+  async write(record: SinkRecord, onWritten?: WriteProgress): Promise<WriteResult> {
     const { contentHash, attributes, payload, contentType, expiresIn } = this.prepare(record)
     return this.runExclusive(async () => {
       const existing = await this.findByEventId(record.eventId)
+      let res: WriteResult
       if (existing) {
-        if (existing.contentHash === contentHash) return { op: 'skip', key: existing.key }
-        // Arkiv update = full-replace; we pass the COMPLETE new state, so replace is correct.
-        const r = await this.wallet.updateEntity({ entityKey: existing.key, payload, contentType, attributes, expiresIn })
+        if (existing.contentHash === contentHash) {
+          res = { op: 'skip', key: existing.key }
+        } else {
+          // Arkiv update = full-replace; we pass the COMPLETE new state, so replace is correct.
+          const r = await this.wallet.updateEntity({ entityKey: existing.key, payload, contentType, attributes, expiresIn })
+          this.writes++
+          res = { op: 'update', key: r.entityKey as string, txHash: r.txHash as string }
+        }
+      } else {
+        const r = await this.wallet.createEntity({ payload, contentType, attributes, expiresIn })
         this.writes++
-        return { op: 'update', key: r.entityKey as string, txHash: r.txHash as string }
+        res = { op: 'create', key: r.entityKey as string, txHash: r.txHash as string }
       }
-      const r = await this.wallet.createEntity({ payload, contentType, attributes, expiresIn })
-      this.writes++
-      return { op: 'create', key: r.entityKey as string, txHash: r.txHash as string }
+      onWritten?.({ eventId: record.eventId, op: res.op, key: res.key, txHash: res.txHash })
+      return res
     })
   }
 
   /** Batched upsert — one transaction per BATCH_SIZE records. Atomic + dedup-safe. */
-  async writeBatch(records: SinkRecord[]): Promise<WriteResult[]> {
+  async writeBatch(records: SinkRecord[], onWritten?: WriteProgress): Promise<WriteResult[]> {
     if (records.length === 0) return []
 
     // Dedupe within the batch by eventId (last wins) — getLogs is already unique, but a config
@@ -271,6 +278,7 @@ export class ArkivSink implements Sink {
         if (ex) {
           if (ex.contentHash === p.contentHash) {
             resultById.set(p.record.eventId, { op: 'skip', key: ex.key })
+            onWritten?.({ eventId: p.record.eventId, op: 'skip', key: ex.key })
           } else {
             ops.push({ kind: 'update', id: p.record.eventId, params: { entityKey: ex.key, payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
           }
@@ -289,12 +297,21 @@ export class ArkivSink implements Sink {
         const r = await this.wallet.mutateEntities(params) // already inside the write lock
         const txHash = (r as { txHash?: string }).txHash
         this.writes += chunk.length
-        for (const o of chunk) resultById.set(o.id, { op: o.kind, txHash })
+        for (const o of chunk) {
+          resultById.set(o.id, { op: o.kind, txHash })
+          onWritten?.({ eventId: o.id, op: o.kind, txHash })
+        }
       }
     })
 
-    // Align results back to the original input order.
-    return records.map((r) => resultById.get(r.eventId) ?? { op: 'skip' })
+    // Align results back to the original input order. Duplicate input positions (same eventId) get
+    // 'skip' so the caller never over-counts a single entity as multiple writes.
+    const seen = new Set<string>()
+    return records.map((r) => {
+      if (seen.has(r.eventId)) return { op: 'skip' as const }
+      seen.add(r.eventId)
+      return resultById.get(r.eventId) ?? { op: 'skip' }
+    })
   }
 
   async delete(eventIdValue: string): Promise<void> {

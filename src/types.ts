@@ -71,6 +71,9 @@ export interface SinkRecord {
 
 export type WriteOp = 'create' | 'update' | 'skip'
 
+/** Fired as each record is committed (per batch), so a UI can stream writes live instead of in a burst. */
+export type WriteProgress = (w: { eventId: string; op: WriteOp; key?: string; txHash?: string }) => void
+
 export interface WriteResult {
   op: WriteOp
   /** Sink-native id for the stored record (Arkiv entity key). */
@@ -90,12 +93,13 @@ export interface Sink {
   /** Preflight: connectivity + (for on-chain sinks) a funded-wallet balance check. Throws human errors. */
   init(): Promise<void>
   /** Idempotent write: create if new, full-replace if the eventId exists and changed, else skip. */
-  write(record: SinkRecord): Promise<WriteResult>
+  write(record: SinkRecord, onWritten?: WriteProgress): Promise<WriteResult>
   /**
    * Optional batched write — one transaction for many records (huge throughput + cost win on
-   * busy contracts). If absent, the indexer falls back to write() per record.
+   * busy contracts). If absent, the indexer falls back to write() per record. `onWritten` fires per
+   * record AS each batch commits, so a UI streams writes live instead of one burst at the end.
    */
-  writeBatch?(records: SinkRecord[]): Promise<WriteResult[]>
+  writeBatch?(records: SinkRecord[], onWritten?: WriteProgress): Promise<WriteResult[]>
   /** Remove the record for an orphaned event (used when a reorg drops a log). */
   delete(eventId: string): Promise<void>
   /**
