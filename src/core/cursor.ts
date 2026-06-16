@@ -31,6 +31,7 @@ export class FileCursorStore implements CursorStore {
       lastProcessedBlock: string
       blockHashes: Record<string, Hex>
       reorgRecoverUntil?: string | null
+      configFingerprint?: string | null
     }
     return {
       chainId: parsed.chainId,
@@ -38,6 +39,9 @@ export class FileCursorStore implements CursorStore {
       blockHashes: parsed.blockHashes ?? {},
       reorgRecoverUntil:
         parsed.reorgRecoverUntil != null ? BigInt(parsed.reorgRecoverUntil) : undefined,
+      // MUST persist: the config-fingerprint refusal (don't resume a cursor built for a different
+      // contract/events/chain) is dead without this — the in-memory store kept it, the file didn't.
+      configFingerprint: parsed.configFingerprint != null ? parsed.configFingerprint : undefined,
     }
   }
 
@@ -48,6 +52,7 @@ export class FileCursorStore implements CursorStore {
       lastProcessedBlock: cursor.lastProcessedBlock.toString(),
       blockHashes: cursor.blockHashes,
       reorgRecoverUntil: cursor.reorgRecoverUntil != null ? cursor.reorgRecoverUntil.toString() : null,
+      configFingerprint: cursor.configFingerprint ?? null,
     }
     // Write-then-rename for atomicity: a crash mid-write can't corrupt the cursor.
     const target = this.file(id)

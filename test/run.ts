@@ -13,11 +13,15 @@ import type {
   WriteResult,
 } from '../src/types.js'
 import { Indexer, type IndexerActivity } from '../src/core/indexer.js'
-import { MemoryCursorStore } from '../src/core/cursor.js'
+import { FileCursorStore, MemoryCursorStore } from '../src/core/cursor.js'
 import { detectReorg } from '../src/core/reorg.js'
+import { scopeToOwner, quoteValue } from '../src/sink/predicate.js'
 import { silentLogger } from '../src/log.js'
 import { days, hours, seconds } from '../src/time.js'
 import { eventId, stableStringify } from '../src/util.js'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 // ── tiny test harness ────────────────────────────────────────────────────────
 let passed = 0
@@ -470,6 +474,65 @@ async function main() {
     eq(writes.length, r.processed, 'one write activity per processed event')
     assert(writings.length >= 1, 'a writing activity fired')
     eq(new Set(writes.map((w) => (w as { eventId: string }).eventId)).size, writes.length, 'no duplicate write activities')
+  })
+
+  // ── predicate injection: owner-scope must be unescapable (shared public store) ──
+  await test('owner-scope rejects quote-aware predicate injection, accepts legit predicates', () => {
+    const owner = '0x000000000000000000000000000000000000dEaD'
+    const mustReject = [
+      'a = " (" && a = 1) || true || (a = " )"', // parens hidden in quotes mask a real ')' that escapes the wrap
+      'x = 1) || (1=1', // early close
+      'a = "x', // unterminated quote
+      'a = 1 -- comment', // comment token
+      'a = 1 || $owner = 0x0000000000000000000000000000000000000000 /* x */', // comment swallow
+    ]
+    for (const p of mustReject) {
+      let threw = false
+      try {
+        scopeToOwner(p, owner)
+      } catch {
+        threw = true
+      }
+      assert(threw, `must reject injection: ${p}`)
+    }
+    const wrapped = scopeToOwner('event = "Transfer" && block > 100', owner)
+    assert(wrapped.startsWith(`($owner = ${owner})`), 'owner clause comes first')
+    scopeToOwner('name = "foo (bar)"', owner) // legit parens INSIDE a string value are fine
+    let badOwner = false
+    try {
+      scopeToOwner('a = 1', 'not-an-address')
+    } catch {
+      badOwner = true
+    }
+    assert(badOwner, 'bad owner address rejected')
+    let qv = false
+    try {
+      quoteValue('a"b')
+    } catch {
+      qv = true
+    }
+    assert(qv, 'quoteValue rejects an embedded quote')
+  })
+
+  // ── FileCursorStore must persist configFingerprint (the production cursor guard) ──
+  await test('FileCursorStore round-trips configFingerprint (prod cursor guard is live)', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'arkiv-cursor-'))
+    try {
+      const store = new FileCursorStore(dir)
+      await store.save('11155111-test', {
+        chainId: 11155111,
+        lastProcessedBlock: 42n,
+        blockHashes: { '42': hex32('h:42') },
+        reorgRecoverUntil: undefined,
+        configFingerprint: 'cfg-XYZ',
+      })
+      const loaded = await store.load('11155111-test')
+      assert(loaded, 'cursor loaded from file')
+      eq(loaded!.configFingerprint, 'cfg-XYZ', 'configFingerprint survived the file round-trip')
+      eq(loaded!.lastProcessedBlock, 42n, 'lastProcessedBlock survived')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   // ── report ──

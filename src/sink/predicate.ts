@@ -30,18 +30,28 @@ export function quoteValue(value: string): string {
  * keeps the owner constraint over the whole thing.
  */
 function assertBalanced(predicate: string): void {
+  // CRITICAL: only count parens OUTSIDE quoted strings. Arkiv's query parser treats parens inside a
+  // "..." literal as data, so counting them here let a payload like
+  //   a = " (" && a = 1) || true || (a = " )"
+  // pass (net depth 0, even quotes) while the REAL grammar sees an unbalanced ')' that closes the
+  // owner wrap early — then `|| true` escapes the owner scope. Track inQuotes so the parens that
+  // actually matter (the unquoted ones) must balance, which makes `($owner) && (predicate)` airtight.
   let depth = 0
-  let quotes = 0
+  let inQuotes = false
   for (const ch of predicate) {
-    if (ch === '"') quotes++
-    else if (ch === '(') depth++
+    if (ch === '"') {
+      inQuotes = !inQuotes
+      continue
+    }
+    if (inQuotes) continue
+    if (ch === '(') depth++
     else if (ch === ')') {
       depth--
       if (depth < 0) throw new Error('Unbalanced parenthesis in query predicate.')
     }
   }
+  if (inQuotes) throw new Error('Unbalanced double-quote in query predicate.')
   if (depth !== 0) throw new Error('Unbalanced parenthesis in query predicate.')
-  if (quotes % 2 !== 0) throw new Error('Unbalanced double-quote in query predicate.')
 }
 
 /**
