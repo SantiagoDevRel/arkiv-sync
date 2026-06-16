@@ -105,7 +105,10 @@ export default async function handler(req, res) {
         for (const [k, v] of Object.entries(e.args ?? {})) {
           if (n++ >= 6) break
           const key = RESERVED.has(k) ? `a_${k}` : k
-          attributes[key] = String(v).slice(0, 200)
+          // 2000 covers any normal EVM value (address 42 · uint256 ~78 · bytes32 66) without truncating;
+          // only a pathological long string/bytes arg is capped (this is a demo display bound). The full
+          // event is always in the entity payload (`data`) regardless.
+          attributes[key] = String(v).slice(0, 2000)
         }
         return { attributes }
       },

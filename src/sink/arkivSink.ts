@@ -270,9 +270,12 @@ export class ArkivSink implements Sink {
           `Got ${expiresIn}. Use the time helpers: days()/hours()/minutes(), never milliseconds.`,
       )
     }
-    const contentHash = hashContent(record, contentType, expiresIn)
+    // Normalize ONCE, then hash + serialize the SAME object — so the content hash always reflects the
+    // exact bytes stored (no representation drift that could skip a real change as a no-op).
+    const jsonPayload = toJsonObject(record.payload)
+    const contentHash = hashContent(record.attributes, jsonPayload, contentType, expiresIn)
     const attributes: Attribute[] = [...record.attributes, { key: 'contentHash', value: contentHash }]
-    const payload = jsonToPayload(toJsonObject(record.payload))
+    const payload = jsonToPayload(jsonPayload)
     return { contentHash, attributes, payload, contentType, expiresIn }
   }
 
@@ -482,12 +485,15 @@ export class ArkivSink implements Sink {
  * update replaces — payload, attributes (type-preserving via stableStringify, so number 1 ≠ string
  * "1"), contentType, and expiration — so a change to any of them is seen. Full sha256 (no truncation).
  */
-function hashContent(record: SinkRecord, contentType: string, expiresIn: number): string {
-  const attributes = record.attributes
+function hashContent(rawAttributes: Attribute[], payloadJson: unknown, contentType: string, expiresIn: number): string {
+  const attributes = rawAttributes
     .filter((a) => a.key !== 'contentHash')
     .map((a) => ({ key: a.key, value: a.value }))
     .sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))
-  const fingerprint = stableStringify({ contentType, expiresIn, attributes, payload: record.payload })
+  // Hash the NORMALIZED payload (toJsonObject output = exactly what gets serialized + stored), not the
+  // raw pre-normalization object — a Date/custom-toJSON value could otherwise hash one way and store
+  // another, so a genuine change would be wrongly skipped as a no-op.
+  const fingerprint = stableStringify({ contentType, expiresIn, attributes, payload: payloadJson })
   return createHash('sha256').update(fingerprint).digest('hex')
 }
 
@@ -496,5 +502,6 @@ function toJsonObject(payload: unknown): object {
   if (payload && typeof payload === 'object') {
     return JSON.parse(JSON.stringify(payload, bigintReplacer))
   }
-  return { value: payload }
+  // Wrap a primitive; coerce a root bigint so JSON.stringify (inside jsonToPayload) never throws.
+  return { value: typeof payload === 'bigint' ? payload.toString() : payload }
 }

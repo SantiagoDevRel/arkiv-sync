@@ -6,6 +6,7 @@
 import type {
   BlockHeader,
   CursorStore,
+  EventMapper,
   Hex,
   NormalizedEvent,
   Sink,
@@ -234,12 +235,13 @@ function makeIndexer(
     fetchStepBlocks: number
     configFingerprint: string
     onActivity: (a: IndexerActivity) => void
+    map: EventMapper
   }> = {},
 ) {
   return new Indexer({
     source,
     sink,
-    map: () => ({}),
+    map: opts.map ?? (() => ({})),
     ttlSeconds: days(30),
     cursorStore: store,
     logger: silentLogger,
@@ -648,6 +650,23 @@ async function main() {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  // ── data integrity: a non-string|number attribute fails LOUD (not silently dropped) ──
+  await test('invalid attribute value throws instead of being silently dropped', async () => {
+    const source = new MockSource()
+    source.build(11, 1, 'a')
+    const ix = makeIndexer(source, new MemorySink(), new MemoryCursorStore(), {
+      map: () => ({ attributes: { ok: 'x', bad: true as unknown as string } }),
+    })
+    await ix.init()
+    let msg = ''
+    try {
+      await ix.runOnce()
+    } catch (e) {
+      msg = (e as Error).message
+    }
+    assert(/must be a string or number/.test(msg), `a boolean attribute must throw clearly (got: ${msg})`)
   })
 
   // ── report ──

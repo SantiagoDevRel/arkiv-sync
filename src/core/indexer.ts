@@ -469,6 +469,14 @@ export class Indexer {
       }
       // Coerce bigint → string defensively (Arkiv attribute values are string|number).
       const value = typeof raw === 'bigint' ? (raw as bigint).toString() : raw
+      // Fail LOUD on a non-string|number attribute — the SDK silently DROPS such values, which would
+      // lose a queryable field with no error. Force the mapper to stringify (or use `data`).
+      if (typeof value !== 'string' && typeof value !== 'number') {
+        throw new Error(
+          `Attribute "${key}" must be a string or number (got ${value === null ? 'null' : typeof value}). ` +
+            `Stringify it in map() — e.g. String(x) / addr(x) / uint(x) — or put rich data in \`data\`.`,
+        )
+      }
       attributes.push({ key, value })
     }
 
