@@ -45,7 +45,7 @@ npm run build                 # esbuild → dist/ (+ .d.ts); needed before `npm 
 - **NEVER `.orderBy()`** (no functional server-side order; removed in SDK 0.7.0). Sort client-side.
 - **Arkiv store is PUBLIC/shared** → every read is owner-scoped + injection-safe (`src/sink/predicate.ts`: owner clause first, address validated, values reject quotes/comment tokens).
 - **viem is a direct dep** (the source reads a non-Arkiv chain). Keep it pinned to the SDK's range so there's one viem instance.
-- **Testnet-only allowlist** (default-deny); never mainnet. Key never logged (`scrubSecrets`), never committed.
+- **Testnet-only by default**; the sink is an `ArkivNetwork` seam (default `BRAGA_NETWORK`). `assertWritableChain` bans known EVM mainnets always, requires the RPC chainId to match the configured network, and refuses a non-testnet network without `allowMainnet`. Mainnet = a config field (`arkivNetwork` + `allowMainnet`). Key never logged (`scrubSecrets` — also redacts URL creds), never committed.
 
 ## Messaging (engagement rules)
 
@@ -61,7 +61,11 @@ Multi-model adversarial gate, 3 lenses. **claude + agy** (Fase 1): hardened quer
 
 Second adversarial gate — "break the worker under load" (claude + agy + codex, strong convergence). Hardcoded guards added + verified (13 unit tests + live smoke): **`maxEventsPerTick`** (bounds memory by event count — shrinks the range, no OOM), **config-fingerprint refusal** (won't reuse a cursor for a different contract/events/chain), **min poll interval** (a `0` can't hot-loop), **consecutive-failure cap** (clean stop vs infinite wedge), **`lagBlocks` observability** (backpressure visible), **bulk existence lookup** (1 paged query/tick vs N → no 429 storm), **batched deletes** in reconcile, **429-vs-range classification** (don't amplify rate-limits), **header caching** across ticks, **actionable poison-pill-block error**. Backpressure model: chain+cursor is the buffer (no in-memory queue, nothing dropped); overload = visible lag. Known ceiling ≈ **25 events/sec** (one wallet × 50/tx × Braga ~2s) → multi-wallet pool is the documented follow-up for higher throughput.
 
+## Production + mainnet gate (2026-06-15, 3 models)
+
+Third adversarial gate — "make it production-ready + mainnet-compatible" (codex + agy + a 6-lens claude workflow; each finding verified vs the source). Confirmed + applied: **CRITICAL** quote-aware predicate balance (parens hidden in quotes could escape owner-scope on the shared store — agy caught it); **HIGH** `FileCursorStore` now persists `configFingerprint` (the refusal guard was dead in prod — only `MemoryCursorStore` kept it, so the test passed); the **`ArkivNetwork` sink seam** (mainnet swap = config field; fixes the old `ARKIV_ALLOW_CHAIN_ID` chainId/chain-object mismatch); `writeBatch` returns real per-entity keys; no-owner reads are injection-validated + safe builders exported; `quoteValue` rejects backslash; `addr()`/`uint()` coercers; `scrubSecrets` redacts URL creds; `fromBlock>head` guard; `expiresIn>=2` validation; configurable `batchSize`; web-demo XSS escaping + CSP. **19 unit tests** + live smoke each round. Documented follow-ups: multi-wallet writer pool (>25 ev/s), `findExistingByRange` paging bound, per-block log pagination.
+
 ## Dogfooding / friction captured for product
 
 - `quickCheck(config)` doubles as a friction sensor (`npm run verify` in the template).
-- Build friction worth flagging to the Arkiv team: SDK type `TS2742` portability error needed an explicit return-type annotation; `mutateEntities` returns only a tx hash (no per-entity keys for batched creates); the SDK re-exports viem but a non-Arkiv source still needs viem directly; numeric range predicates (`block > N`) work and are essential for reorg reconciliation.
+- Build friction worth flagging to the Arkiv team: SDK type `TS2742` portability error needed an explicit return-type annotation; the SDK re-exports viem but a non-Arkiv source still needs viem directly; numeric range predicates (`block > N`) work and are essential for reorg reconciliation. **(Corrected:** `mutateEntities` DOES return per-entity keys — `{ txHash, createdEntities[], updatedEntities[] }` in 0.6.8 — `writeBatch` now maps them back to each op.)
