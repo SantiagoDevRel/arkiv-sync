@@ -15,7 +15,8 @@ import type { Hex, Logger, Sink, SinkRecord, WriteProgress, WriteResult } from '
 import { bigintReplacer, stableStringify, short, scrubSecrets } from '../util.js'
 import { quoteValue, scopeToOwner } from './predicate.js'
 
-const BATCH_SIZE = 50 // entities per mutateEntities transaction
+const BATCH_SIZE = 50 // entities per mutateEntities transaction (default; tunable up to MAX_OPS_PER_TX)
+const MAX_OPS_PER_TX = 1000 // Arkiv hard cap: a mutateEntities tx with >1000 operations is rejected (measured on Braga)
 const FIND_CONCURRENCY = 8 // parallel existence checks
 
 /**
@@ -65,8 +66,9 @@ export interface ArkivSinkOptions {
   /** Explicitly allow writing to a NON-testnet Arkiv network (REAL funds at risk). Also settable via
    *  ARKIV_ALLOW_MAINNET=1. Default false. A known EVM mainnet id is refused regardless. */
   allowMainnet?: boolean
-  /** Entities per mutateEntities transaction. Default 50. Larger = higher throughput per block but a
-   *  bigger tx; lower it if the network rejects oversized batches. */
+  /** Entities per mutateEntities transaction. Default 50; **clamped to 1000** (Arkiv rejects a tx with
+   *  >1000 operations). Larger = higher throughput per wallet (≈ batchSize/blockTime) but a bigger
+   *  atomic blast radius if the tx fails. ~150–500 ev/s per wallet at batchSize 1000. */
   batchSize?: number
 }
 
@@ -149,8 +151,10 @@ export class ArkivSink implements Sink {
     this.log = opts.logger
     this.network = opts.network ?? BRAGA_NETWORK
     this.allowMainnet = opts.allowMainnet ?? process.env.ARKIV_ALLOW_MAINNET === '1'
-    // Guard against NaN/0/negatives/floats — a bad batchSize would make chunking misbehave.
-    this.batchSize = Number.isInteger(opts.batchSize) && (opts.batchSize as number) > 0 ? (opts.batchSize as number) : BATCH_SIZE
+    // Guard NaN/0/negatives/floats, and CLAMP to Arkiv's 1000-ops-per-tx cap (a larger batch would make
+    // every write tx fail with "number of operations is greater than 1000").
+    const wantedBatch = Number.isInteger(opts.batchSize) && (opts.batchSize as number) > 0 ? (opts.batchSize as number) : BATCH_SIZE
+    this.batchSize = Math.min(wantedBatch, MAX_OPS_PER_TX)
     this.name = this.network.name
     this.account = privateKeyToAccount(key)
     const transport = http(opts.rpcUrl) // undefined → SDK uses the network's default RPC
