@@ -62,6 +62,9 @@ export interface ArkivSinkOptions {
   /** Explicitly allow writing to a NON-testnet Arkiv network (REAL funds at risk). Also settable via
    *  ARKIV_ALLOW_MAINNET=1. Default false. A known EVM mainnet id is refused regardless. */
   allowMainnet?: boolean
+  /** Entities per mutateEntities transaction. Default 50. Larger = higher throughput per block but a
+   *  bigger tx; lower it if the network rejects oversized batches. */
+  batchSize?: number
 }
 
 /**
@@ -129,6 +132,7 @@ export class ArkivSink implements Sink {
   readonly name: string
   private readonly network: ArkivNetwork
   private readonly allowMainnet: boolean
+  private readonly batchSize: number
   private readonly pub: ReturnType<typeof createPublicClient>
   private readonly wallet: ReturnType<typeof createWalletClient>
   private readonly account: ReturnType<typeof privateKeyToAccount>
@@ -142,6 +146,7 @@ export class ArkivSink implements Sink {
     this.log = opts.logger
     this.network = opts.network ?? BRAGA_NETWORK
     this.allowMainnet = opts.allowMainnet ?? process.env.ARKIV_ALLOW_MAINNET === '1'
+    this.batchSize = Math.max(1, opts.batchSize ?? BATCH_SIZE)
     this.name = this.network.name
     this.account = privateKeyToAccount(key)
     const transport = http(opts.rpcUrl) // undefined → SDK uses the network's default RPC
@@ -255,6 +260,12 @@ export class ArkivSink implements Sink {
   private prepare(record: SinkRecord) {
     const contentType = record.contentType ?? 'application/json'
     const expiresIn = record.expiresInSeconds
+    if (!Number.isInteger(expiresIn) || expiresIn < 2) {
+      throw new Error(
+        `expiresInSeconds must be an integer >= 2 (Arkiv TTL is in SECONDS, ~2s block granularity). ` +
+          `Got ${expiresIn}. Use the time helpers: days()/hours()/minutes(), never milliseconds.`,
+      )
+    }
     const contentHash = hashContent(record, contentType, expiresIn)
     const attributes: Attribute[] = [...record.attributes, { key: 'contentHash', value: contentHash }]
     const payload = jsonToPayload(toJsonObject(record.payload))
@@ -340,8 +351,8 @@ export class ArkivSink implements Sink {
         }
       }
 
-      for (let start = 0; start < ops.length; start += BATCH_SIZE) {
-        const chunk = ops.slice(start, start + BATCH_SIZE)
+      for (let start = 0; start < ops.length; start += this.batchSize) {
+        const chunk = ops.slice(start, start + this.batchSize)
         const params: MutateEntitiesParameters = {}
         const cc = chunk.filter((o) => o.kind === 'create')
         const cu = chunk.filter((o) => o.kind === 'update')
@@ -412,8 +423,8 @@ export class ArkivSink implements Sink {
 
     // Batch the deletes — one tx per ~50 entities, not one tx per entity (a big reorg could orphan
     // thousands; serializing thousands of single-delete txs through one nonce would take forever).
-    for (let i = 0; i < stale.length; i += BATCH_SIZE) {
-      const chunk = stale.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < stale.length; i += this.batchSize) {
+      const chunk = stale.slice(i, i + this.batchSize)
       await this.runExclusive(() =>
         this.wallet.mutateEntities({ deletes: chunk.map((entityKey) => ({ entityKey })) } as MutateEntitiesParameters),
       )

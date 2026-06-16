@@ -174,6 +174,15 @@ export class Indexer {
         start = head - this.confirmations
       } else {
         start = BigInt(this.fromBlock)
+        // Guard a fromBlock past the chain head — otherwise the worker silently waits forever for
+        // blocks that do not exist yet (a common config/copy-paste mistake).
+        const head = await this.source.getHeadBlock()
+        if (start > head) {
+          throw new Error(
+            `fromBlock ${start} is beyond the current ${this.source.name} head ${head}. ` +
+              `Use a block <= head, or 'latest' to index only new events.`,
+          )
+        }
       }
       if (start < 0n) start = 0n
       this.cursor = {
@@ -233,7 +242,9 @@ export class Indexer {
       cursor.reorgRecoverUntil = recoverUntil
       await this.cursorStore.save(this.cursorId, cursor)
       const lag = safeHead > cursor.lastProcessedBlock ? safeHead - cursor.lastProcessedBlock : 0n
-      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: true, lagBlocks: lag }
+      // A pending reorg recovery means we are NOT actually up to date (orphans still to clean once the
+      // chain re-grows) — report it so a driver keeps ticking instead of idling on the poll interval.
+      return { head, safeHead, processed: 0, written: 0, reorged, upToDate: recoverUntil === undefined, lagBlocks: lag }
     }
 
     // Fetch stepping through [fromB, toB], STOPPING early if we'd exceed maxEventsPerTick. This

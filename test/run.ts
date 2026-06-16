@@ -571,6 +571,20 @@ async function main() {
     assert(throws(() => assertWritableChain(999, braga, false)), 'RPC chainId must match the configured network')
   })
 
+  // ── edge: a fromBlock past the chain head is refused (not a silent forever-wait) ──
+  await test('init refuses a fromBlock beyond the chain head', async () => {
+    const source = new MockSource()
+    source.build(11, 1, 'a') // head 10
+    const ix = makeIndexer(source, new MemorySink(), new MemoryCursorStore(), { fromBlock: 50 })
+    let threw = false
+    try {
+      await ix.init()
+    } catch {
+      threw = true
+    }
+    assert(threw, 'fromBlock 50 > head 10 must throw')
+  })
+
   // ── report ──
   process.stderr.write(results.join('\n') + '\n')
   process.stderr.write(`\n${passed} passed, ${failed} failed\n`)
