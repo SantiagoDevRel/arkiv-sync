@@ -5,7 +5,7 @@ import { days } from './time.js'
 import { createLogger } from './log.js'
 import { EvmSource } from './source/evmSource.js'
 import { resolveSourceChain, type SourceChainDef } from './source/chains.js'
-import { ArkivSink } from './sink/arkivSink.js'
+import { ArkivSink, BRAGA_NETWORK, type ArkivNetwork } from './sink/arkivSink.js'
 import { createArkivReader, type DecodedEntity } from './sink/arkivQuery.js'
 import { FileCursorStore, MemoryCursorStore } from './core/cursor.js'
 import { Indexer, type IndexerActivity } from './core/indexer.js'
@@ -49,6 +49,11 @@ export interface ArkivSyncConfig {
   map?: EventMapper
   /** Override the sink. Default: Arkiv (Braga), signing locally with PRIVATE_KEY from env. */
   sink?: Sink
+  /** Arkiv network the sink writes to (the SINK target — NOT the source chain). Default: Braga testnet.
+   *  When Arkiv mainnet launches, the swap is this one field (+ allowMainnet). */
+  arkivNetwork?: ArkivNetwork
+  /** Opt in to writing to a NON-testnet arkivNetwork (real funds). Default false (or ARKIV_ALLOW_MAINNET=1). */
+  allowMainnet?: boolean
   /** Cursor namespace label. Default: derived from the first contract address. */
   label?: string
   logger?: Logger
@@ -118,7 +123,13 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
         'funded at https://braga.hoodi.arkiv.network/faucet/ — or pass a custom `sink` in config.',
     )
   }
-  return new ArkivSink({ privateKey, rpcUrl: process.env.ARKIV_RPC_URL, logger })
+  return new ArkivSink({
+    privateKey,
+    rpcUrl: process.env.ARKIV_RPC_URL,
+    logger,
+    network: config.arkivNetwork,
+    allowMainnet: config.allowMainnet,
+  })
 }
 
 /**
@@ -232,7 +243,10 @@ export async function quickCheck(
   }
 
   const contract = normalizeAddresses(config.source.contract)[0]!
-  const reader = createArkivReader({ rpcUrl: process.env.ARKIV_RPC_URL })
+  const reader = createArkivReader({
+    rpcUrl: process.env.ARKIV_RPC_URL,
+    chain: (config.arkivNetwork ?? BRAGA_NETWORK).chain,
+  })
   const sample = await reader.query(`contract = "${contract}"`, {
     owner: sink.address,
     limit: 25,

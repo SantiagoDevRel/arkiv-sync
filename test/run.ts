@@ -15,6 +15,7 @@ import type {
 import { Indexer, type IndexerActivity } from '../src/core/indexer.js'
 import { FileCursorStore, MemoryCursorStore } from '../src/core/cursor.js'
 import { detectReorg } from '../src/core/reorg.js'
+import { assertWritableChain, type ArkivNetwork } from '../src/sink/arkivSink.js'
 import { scopeToOwner, quoteValue, assertSafePredicate } from '../src/sink/predicate.js'
 import { silentLogger } from '../src/log.js'
 import { days, hours, seconds } from '../src/time.js'
@@ -548,6 +549,26 @@ async function main() {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  // ── sink network policy: testnet default, mainnet gated, EVM mainnet always banned, id must match ──
+  await test('sink chain policy gates mainnet + bans EVM mainnets + matches chainId', () => {
+    const braga = { chain: { id: 60138453102 } as never, name: 'arkiv:braga', isTestnet: true, explorerUrl: 'x' } as ArkivNetwork
+    const arkMain = { chain: { id: 88888 } as never, name: 'arkiv:mainnet', isTestnet: false, explorerUrl: 'x' } as ArkivNetwork
+    const throws = (fn: () => void) => {
+      try {
+        fn()
+        return false
+      } catch {
+        return true
+      }
+    }
+    assertWritableChain(60138453102, braga, false) // Braga testnet → ok
+    assert(throws(() => assertWritableChain(1, braga, false)), 'Ethereum mainnet (1) banned')
+    assert(throws(() => assertWritableChain(8453, arkMain, true)), 'known EVM mainnet (Base 8453) banned even with opt-in')
+    assert(throws(() => assertWritableChain(88888, arkMain, false)), 'non-testnet network refused without allowMainnet')
+    assertWritableChain(88888, arkMain, true) // non-testnet WITH opt-in → ok
+    assert(throws(() => assertWritableChain(999, braga, false)), 'RPC chainId must match the configured network')
   })
 
   // ── report ──

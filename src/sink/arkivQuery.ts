@@ -1,5 +1,6 @@
 import { createPublicClient, http, type Attribute, type PublicArkivClient } from '@arkiv-network/sdk'
 import { braga } from '@arkiv-network/sdk/chains'
+import type { Chain } from 'viem'
 import type { Hex } from '../types.js'
 import { assertSafePredicate, scopeToOwner } from './predicate.js'
 
@@ -20,6 +21,9 @@ export interface DecodedEntity {
 
 export interface ArkivReaderOptions {
   rpcUrl?: string
+  /** Arkiv network chain to read from. Default: Braga. Pass the sink's network chain to stay aligned
+   *  (reader and writer must target the SAME network). */
+  chain?: Chain
 }
 
 export interface QueryParams {
@@ -78,7 +82,10 @@ export interface ArkivReader {
 }
 
 export function createArkivReader(opts: ArkivReaderOptions = {}): ArkivReader {
-  const pub: PublicArkivClient = createPublicClient({ chain: braga, transport: http(opts.rpcUrl) })
+  const pub: PublicArkivClient = createPublicClient({
+    chain: opts.chain ?? (braga as unknown as Chain),
+    transport: http(opts.rpcUrl),
+  })
 
   async function query(predicate: string, params: QueryParams = {}): Promise<DecodedEntity[]> {
     const { limit = 25, owner, cursor, sortBy, sortDir = 'desc' } = params

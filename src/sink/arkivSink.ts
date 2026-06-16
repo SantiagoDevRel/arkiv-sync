@@ -10,36 +10,83 @@ import {
 import { privateKeyToAccount } from '@arkiv-network/sdk/accounts'
 import { braga } from '@arkiv-network/sdk/chains'
 import { jsonToPayload, formatEther } from '@arkiv-network/sdk/utils'
+import type { Chain } from 'viem'
 import type { Hex, Logger, Sink, SinkRecord, WriteProgress, WriteResult } from '../types.js'
 import { bigintReplacer, stableStringify, short } from '../util.js'
 import { quoteValue, scopeToOwner } from './predicate.js'
 
-const BRAGA_CHAIN_ID = 60138453102
-const BRAGA_FAUCET = 'https://braga.hoodi.arkiv.network/faucet/'
-const BRAGA_EXPLORER = 'https://explorer.braga.hoodi.arkiv.network'
 const BATCH_SIZE = 50 // entities per mutateEntities transaction
 const FIND_CONCURRENCY = 8 // parallel existence checks
 
-export interface ArkivSinkOptions {
-  /** A 0x + 64-hex testnet private key (from .env). Signs locally; never leaves the machine. */
-  privateKey: string
-  /** Override the Braga RPC. Default = the SDK's verified Braga endpoint. */
-  rpcUrl?: string
-  logger: Logger
+/**
+ * The Arkiv network the SINK writes to. Braga (testnet) today; this seam is what makes the eventual
+ * Arkiv-mainnet switch a CONFIG change (pass a different ArkivNetwork) rather than a code edit — the
+ * chain object drives signing (EIP-155 chainId), the explorer/faucet are derived from it, and
+ * `isTestnet` gates the safety rails. Decoupled from the SOURCE chain entirely.
+ */
+export interface ArkivNetwork {
+  /** viem/Arkiv chain object — drives the signed chainId. */
+  chain: Chain
+  /** Human label (also the sink `name`). */
+  name: string
+  /** A testnet? Writing to a NON-testnet network requires an explicit allowMainnet opt-in. */
+  isTestnet: boolean
+  /** Explorer base URL for tx links. */
+  explorerUrl: string
+  /** Faucet URL (testnets only). */
+  faucetUrl?: string
 }
 
-/** Well-known mainnet chain ids — the sink NEVER writes to these, even if listed in the env. */
+/** Default sink network: Braga testnet. */
+export const BRAGA_NETWORK: ArkivNetwork = {
+  chain: braga as unknown as Chain,
+  name: 'arkiv:braga',
+  isTestnet: true,
+  explorerUrl: 'https://explorer.braga.hoodi.arkiv.network',
+  faucetUrl: 'https://braga.hoodi.arkiv.network/faucet/',
+}
+
+/** Well-known EVM mainnet chain ids — NEVER a valid Arkiv sink, even with allowMainnet (defense
+ *  against pointing the writer at Ethereum/Base/BSC/etc. by misconfig). */
 const KNOWN_MAINNETS = new Set([1, 10, 56, 100, 137, 250, 8453, 42161, 43114, 59144, 534352])
 
-/** Allowlist of chain ids this sink may write to (default-deny). Braga + any ARKIV_ALLOW_CHAIN_ID,
- *  but a known mainnet is ALWAYS rejected (absolute "never sign on mainnet" guard). */
-function allowedChainIds(): Set<number> {
-  const ids = new Set<number>([BRAGA_CHAIN_ID])
-  for (const part of (process.env.ARKIV_ALLOW_CHAIN_ID ?? '').split(',')) {
-    const n = Number(part.trim())
-    if (Number.isInteger(n) && n > 0 && !KNOWN_MAINNETS.has(n)) ids.add(n) // never a known mainnet
+export interface ArkivSinkOptions {
+  /** A 0x + 64-hex private key (from .env). Signs locally; never leaves the machine. On a testnet
+   *  network this MUST be a throwaway burner. */
+  privateKey: string
+  /** Override the network RPC. Default = the SDK's default for the configured network. */
+  rpcUrl?: string
+  logger: Logger
+  /** Arkiv network to write to. Default: Braga testnet. */
+  network?: ArkivNetwork
+  /** Explicitly allow writing to a NON-testnet Arkiv network (REAL funds at risk). Also settable via
+   *  ARKIV_ALLOW_MAINNET=1. Default false. A known EVM mainnet id is refused regardless. */
+  allowMainnet?: boolean
+}
+
+/**
+ * Decide whether the sink may sign on `actualChainId`, given the configured network + opt-in. Pure +
+ * exported so the policy is unit-testable. Fail-closed with an actionable message.
+ */
+export function assertWritableChain(actualChainId: number, network: ArkivNetwork, allowMainnet: boolean): void {
+  if (KNOWN_MAINNETS.has(actualChainId)) {
+    throw new Error(
+      `chainId ${actualChainId} is a known EVM mainnet — Arkiv Sync never signs there. The sink must ` +
+        `be an Arkiv network (Braga testnet by default).`,
+    )
   }
-  return ids
+  if (actualChainId !== network.chain.id) {
+    throw new Error(
+      `The Arkiv RPC reports chainId ${actualChainId}, but the configured network "${network.name}" is ` +
+        `chainId ${network.chain.id}. Point ARKIV_RPC_URL at the right network, or pass the matching \`network\`.`,
+    )
+  }
+  if (!network.isTestnet && !allowMainnet) {
+    throw new Error(
+      `Refusing to write to non-testnet Arkiv network "${network.name}" (chainId ${network.chain.id}) without ` +
+        `an explicit opt-in. Set allowMainnet: true (or ARKIV_ALLOW_MAINNET=1) — REAL funds at risk.`,
+    )
+  }
 }
 
 function normalizeKey(raw: string): Hex {
@@ -79,7 +126,9 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T, i: number) =
  *   - Batched writes (mutateEntities) + reorg reconciliation by block-range query.
  */
 export class ArkivSink implements Sink {
-  readonly name = 'arkiv:braga'
+  readonly name: string
+  private readonly network: ArkivNetwork
+  private readonly allowMainnet: boolean
   private readonly pub: ReturnType<typeof createPublicClient>
   private readonly wallet: ReturnType<typeof createWalletClient>
   private readonly account: ReturnType<typeof privateKeyToAccount>
@@ -91,10 +140,13 @@ export class ArkivSink implements Sink {
   constructor(opts: ArkivSinkOptions) {
     const key = normalizeKey(opts.privateKey)
     this.log = opts.logger
+    this.network = opts.network ?? BRAGA_NETWORK
+    this.allowMainnet = opts.allowMainnet ?? process.env.ARKIV_ALLOW_MAINNET === '1'
+    this.name = this.network.name
     this.account = privateKeyToAccount(key)
-    const transport = http(opts.rpcUrl) // undefined → SDK uses Braga's default RPC
-    this.pub = createPublicClient({ chain: braga, transport })
-    this.wallet = createWalletClient({ chain: braga, account: this.account, transport })
+    const transport = http(opts.rpcUrl) // undefined → SDK uses the network's default RPC
+    this.pub = createPublicClient({ chain: this.network.chain, transport })
+    this.wallet = createWalletClient({ chain: this.network.chain, account: this.account, transport })
   }
 
   get address(): Hex {
@@ -116,36 +168,37 @@ export class ArkivSink implements Sink {
   }
 
   async init(): Promise<void> {
-    // Verify the RPC actually serves an allowlisted (Braga) chain BEFORE signing anything.
+    // Verify the RPC serves the CONFIGURED Arkiv network BEFORE signing anything — never an EVM
+    // mainnet, never a non-testnet network without an explicit opt-in, and the chainId must match.
     let chainId: number
     try {
       chainId = await this.pub.getChainId()
     } catch (err) {
-      throw new Error(`Couldn't reach the Arkiv (Braga) RPC. (${String((err as Error).message)})`)
+      throw new Error(`Couldn't reach the Arkiv RPC for "${this.network.name}". (${String((err as Error).message)})`)
     }
-    if (!allowedChainIds().has(chainId)) {
-      throw new Error(
-        `The Arkiv RPC reports chainId ${chainId}, which is not allowlisted (default Braga ${BRAGA_CHAIN_ID}). ` +
-          `Arkiv Sync is testnet-only — set ARKIV_ALLOW_CHAIN_ID for another testnet, never a mainnet.`,
-      )
+    assertWritableChain(chainId, this.network, this.allowMainnet)
+    if (!this.network.isTestnet) {
+      this.log.warn(`⚠ writing to NON-TESTNET Arkiv network "${this.network.name}" (chainId ${chainId}) — REAL funds at risk.`)
     }
 
     const balance = await this.pub.getBalance({ address: this.account.address })
     this.startBalance = balance
     if (balance === 0n) {
+      const fund = this.network.faucetUrl
+        ? `\n  → Fund this address at the faucet: ${this.network.faucetUrl}`
+        : `\n  → Fund this address with the network's gas token.`
       throw new Error(
-        `Wallet ${this.address} has 0 GLM on Braga, so it can't write.\n` +
-          `  → Fund this address at the faucet: ${BRAGA_FAUCET}\n` +
-          `  → Then run the command again. (This key is a throwaway testnet burner.)`,
+        `Wallet ${this.address} has 0 balance on ${this.network.name}, so it can't write.${fund}\n` +
+          `  → Then run the command again.${this.network.isTestnet ? ' (This key is a throwaway testnet burner.)' : ''}`,
       )
     }
     const glm = Number(formatEther(balance))
-    if (glm < 0.01) {
+    if (glm < 0.01 && this.network.faucetUrl) {
       this.log.warn(
-        `wallet ${short(this.address)} balance is low (${glm} GLM). Top up at ${BRAGA_FAUCET} if writes start failing.`,
+        `wallet ${short(this.address)} balance is low (${glm}). Top up at ${this.network.faucetUrl} if writes start failing.`,
       )
     }
-    this.log.info(`sink ready: ${this.name}, wallet ${short(this.address)}, balance ${glm} GLM`)
+    this.log.info(`sink ready: ${this.name}, wallet ${short(this.address)}, balance ${glm}`)
   }
 
   /** Find OUR entity (owner-scoped, injection-safe) carrying this eventId. */
@@ -388,8 +441,14 @@ export class ArkivSink implements Sink {
     return { spentGlm, writes: this.writes, perWriteGlm }
   }
 
+  /** Explorer tx URL for the default (Braga) network. For a custom network use `explorerTxUrl`. */
   static explorerTx(txHash: string): string {
-    return `${BRAGA_EXPLORER}/tx/${txHash}`
+    return `${BRAGA_NETWORK.explorerUrl}/tx/${txHash}`
+  }
+
+  /** Explorer tx URL for THIS sink's configured network. */
+  explorerTxUrl(txHash: string): string {
+    return `${this.network.explorerUrl}/tx/${txHash}`
   }
 }
 

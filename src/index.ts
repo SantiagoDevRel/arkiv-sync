@@ -26,7 +26,13 @@ export { SOURCE_CHAINS, resolveSourceChain, type SourceChainDef } from './source
 export { buildReadTransport } from './source/rpcPool.js'
 
 // Sink (write side) — Arkiv today, swappable by design.
-export { ArkivSink, type ArkivSinkOptions } from './sink/arkivSink.js'
+export {
+  ArkivSink,
+  type ArkivSinkOptions,
+  type ArkivNetwork,
+  BRAGA_NETWORK,
+  assertWritableChain,
+} from './sink/arkivSink.js'
 export {
   createArkivReader,
   type ArkivReader,
