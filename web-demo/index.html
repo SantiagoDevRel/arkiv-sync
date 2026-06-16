@@ -405,7 +405,7 @@ $('queryBtn').onclick = async () => {
       div.innerHTML = `<span class="blk">#${esc(blk)}</span><span class="badge b-update">query</span><span class="args" title="${esc(row.key)}">${esc(ev)} · ${esc(short(row.key, 14))}</span>${verify}<span></span>`
       feed.appendChild(div)
     }
-  } catch (e) { feed.innerHTML = '<div class="empty">Error consultando: ' + (e.message || e) + '</div>' }
+  } catch (e) { feed.innerHTML = '<div class="empty">Error consultando: ' + esc(e.message || e) + '</div>' }
 }
 </script>
 </body>
