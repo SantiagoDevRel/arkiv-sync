@@ -12,7 +12,7 @@ import { braga } from '@arkiv-network/sdk/chains'
 import { jsonToPayload, formatEther } from '@arkiv-network/sdk/utils'
 import type { Chain } from 'viem'
 import type { Hex, Logger, Sink, SinkRecord, WriteProgress, WriteResult } from '../types.js'
-import { bigintReplacer, stableStringify, short } from '../util.js'
+import { bigintReplacer, stableStringify, short, scrubSecrets } from '../util.js'
 import { quoteValue, scopeToOwner } from './predicate.js'
 
 const BATCH_SIZE = 50 // entities per mutateEntities transaction
@@ -179,7 +179,7 @@ export class ArkivSink implements Sink {
     try {
       chainId = await this.pub.getChainId()
     } catch (err) {
-      throw new Error(`Couldn't reach the Arkiv RPC for "${this.network.name}". (${String((err as Error).message)})`)
+      throw new Error(`Couldn't reach the Arkiv RPC for "${this.network.name}". (${scrubSecrets((err as Error).message)})`)
     }
     assertWritableChain(chainId, this.network, this.allowMainnet)
     if (!this.network.isTestnet) {

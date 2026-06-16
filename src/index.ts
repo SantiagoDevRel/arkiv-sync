@@ -47,7 +47,7 @@ export { quoteValue, assertSafePredicate, assertSafeOwner } from './sink/predica
 // Helpers.
 export { seconds, minutes, hours, days, weeks, describeSeconds } from './time.js'
 export { createLogger, silentLogger } from './log.js'
-export { eventId } from './util.js'
+export { eventId, lower, addr, uint, scrubSecrets } from './util.js'
 
 // Types.
 export type {

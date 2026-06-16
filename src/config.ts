@@ -255,14 +255,14 @@ export async function quickCheck(
   })
   const spent = await sink.spendReport()
 
-  return {
-    ok: written >= 1 && sample.length >= 1,
-    window: target,
-    written,
-    queried: sample.length,
-    sample,
-    spent,
-  }
+  const ok = written >= 1 && sample.length >= 1
+  const reason = ok
+    ? undefined
+    : written === 0
+      ? `no events written — the contract + event signature matched nothing in block ${target}.`
+      : `wrote ${written} but the query returned 0 — the Arkiv index can lag briefly after a write; ` +
+        `re-query in a moment, and confirm you owner-scope to the indexer wallet.`
+  return { ok, reason, window: target, written, queried: sample.length, sample, spent }
 }
 
 /**

@@ -19,7 +19,7 @@ import { assertWritableChain, type ArkivNetwork } from '../src/sink/arkivSink.js
 import { scopeToOwner, quoteValue, assertSafePredicate } from '../src/sink/predicate.js'
 import { silentLogger } from '../src/log.js'
 import { days, hours, seconds } from '../src/time.js'
-import { eventId, stableStringify } from '../src/util.js'
+import { eventId, stableStringify, addr, uint, scrubSecrets } from '../src/util.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -583,6 +583,29 @@ async function main() {
       threw = true
     }
     assert(threw, 'fromBlock 50 > head 10 must throw')
+  })
+
+  // ── coercers + secret scrubbing ──
+  await test('addr/uint coercers validate; scrubSecrets redacts keys + URL creds', () => {
+    const t = (fn: () => unknown) => {
+      try {
+        fn()
+        return false
+      } catch {
+        return true
+      }
+    }
+    eq(addr('0xAbC0000000000000000000000000000000000123'), '0xabc0000000000000000000000000000000000123', 'addr lowercases')
+    assert(t(() => addr(undefined)), 'addr throws on undefined (the silent "undefined" footgun)')
+    assert(t(() => addr('0x123')), 'addr throws on a short value')
+    eq(uint(123n), '123', 'uint(bigint)')
+    eq(uint('456'), '456', 'uint(string)')
+    assert(t(() => uint('1.5')), 'uint throws on a non-integer')
+    assert(t(() => uint('abc')), 'uint throws on a non-numeric')
+    const scrubbed = scrubSecrets('https://user:secretpass@rpc.example/p?apikey=ABC123XYZ plus 0x' + 'a'.repeat(64))
+    assert(!scrubbed.includes('secretpass'), 'URL userinfo redacted')
+    assert(!scrubbed.includes('ABC123XYZ'), 'URL apikey redacted')
+    assert(!scrubbed.includes('a'.repeat(64)), '64-hex key redacted')
   })
 
   // ── report ──
