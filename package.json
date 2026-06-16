@@ -1,6 +1,6 @@
 {
   "name": "arkiv-sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Point it at any smart contract on any EVM chain and turn its on-chain events into a queryable Arkiv database — no RPC, reorg, or gas knowledge required.",
   "type": "module",
   "main": "dist/index.js",
