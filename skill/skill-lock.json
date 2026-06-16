@@ -12,7 +12,7 @@
     "querying the derived database",
     "multichain via source adapters"
   ],
-  "npm": { "package": "arkiv-sync", "bin": "arkiv-sync" },
+  "npm": { "package": "arkiv-sync", "version": "0.1.0", "bin": "arkiv-sync", "create": "create-arkiv-sync" },
   "sdk": { "package": "@arkiv-network/sdk", "range": ">=0.6.5 <0.7.0", "verified": "0.6.8" },
   "viem": { "range": "^2.38.2", "note": "direct dependency: the source reads a non-Arkiv chain" },
   "node": { "range": ">=20 <24", "note": "Node 24 hangs Arkiv entity updates (arkiv-sdk-js #14)" },
@@ -40,24 +40,52 @@
   "surface": [
     "defineConfig",
     "createIndexer",
+    "quickCheck",
+    "normalizeAddresses",
     "Indexer",
     "EvmSource",
     "ArkivSink",
+    "ArkivNetwork",
+    "BRAGA_NETWORK",
+    "assertWritableChain",
     "createArkivReader",
-    "days",
-    "hours",
+    "SOURCE_CHAINS",
+    "resolveSourceChain",
+    "FileCursorStore",
+    "MemoryCursorStore",
+    "detectReorg",
+    "seconds",
     "minutes",
+    "hours",
+    "days",
     "weeks",
+    "describeSeconds",
+    "eventId",
+    "lower",
+    "addr",
+    "uint",
+    "scrubSecrets",
+    "quoteValue",
+    "assertSafePredicate",
+    "assertSafeOwner",
+    "createLogger",
+    "silentLogger",
     "NormalizedEvent",
-    "EventMapper"
+    "EventMapper",
+    "MappedEntity",
+    "Sink",
+    "SourceAdapter",
+    "QueryParams",
+    "DecodedEntity"
   ],
   "decides": [
-    "confirmations=5",
+    "confirmations: per-chain default (Sepolia 6 · ETH 24 · Base 40 · BSC 75), override in config",
     "reorgWindow=confirmations+6",
-    "TTL default days(30)",
-    "idempotency key chainId:txHash:logIndex",
-    "owner-scoped injection-safe reads",
-    "batched writes (mutateEntities, 50/tx)"
+    "TTL default days(30), in SECONDS",
+    "idempotency key chainId:txHash:logIndex + sha256 content hash",
+    "owner-scoped injection-safe reads (shared public store)",
+    "batched writes (mutateEntities, default 50/tx, configurable batchSize)",
+    "testnet-only by default; mainnet = config (ArkivNetwork + allowMainnet); EVM mainnets always banned"
   ],
   "messaging": {
     "lead": "queryable database on Ethereum",
@@ -65,5 +93,5 @@
     "ai-vertical": "ephemeral coordination state"
   },
   "last-verified-at": "2026-06-15",
-  "evidence": "engine verified end-to-end on live Sepolia→Braga (smoke) + 10 unit tests (dedup/resume/reorg)"
+  "evidence": "engine verified end-to-end on live Sepolia→Braga (smoke) + 19 unit tests (dedup/resume/reorg/reconcile-scope/deep-reorg/event-cap/fingerprint/predicate-injection/file-cursor/chain-policy/fromBlock-guard/coercers); 3-model adversarial audit (claude + codex + agy)"
 }

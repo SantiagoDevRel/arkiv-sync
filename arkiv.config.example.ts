@@ -17,7 +17,7 @@ export default defineConfig({
       'Transfer(address indexed from, address indexed to, uint256 value)',
     ],
     fromBlock: 'latest', // or a block number to backfill history
-    confirmations: 5,
+    // confirmations defaults per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75) — set a number to override
   },
   ttlSeconds: days(30),
   map: (e: NormalizedEvent) => ({

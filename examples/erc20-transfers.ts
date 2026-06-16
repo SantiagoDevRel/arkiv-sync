@@ -13,7 +13,7 @@ const indexer = createIndexer(
       contract: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14', // WETH (Sepolia)
       events: ['Transfer(address indexed from, address indexed to, uint256 value)'],
       fromBlock: 'latest',
-      confirmations: 5,
+      // confirmations defaults per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75) — set a number to override
     },
     ttlSeconds: days(30),
     map: (e: NormalizedEvent) => ({

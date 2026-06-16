@@ -65,7 +65,7 @@ export default defineConfig({
     contract: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
     events: ['Transfer(address indexed from, address indexed to, uint256 value)'], // "event " optional
     fromBlock: 'latest',   // or a block number to backfill history
-    confirmations: 5,
+    // confirmations defaults per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75) — set a number to override
   },
   ttlSeconds: days(30),    // TTL is in SECONDS — always use the helpers
   map: (e: NormalizedEvent) => ({
@@ -97,6 +97,22 @@ const rows = await reader.query('event = "Transfer"', {
 
 Predicate operators: `=`, `!=`, numeric `>`/`>=`/`<`/`<=`, combined with `&&`/`||`. String values use double quotes; values containing quotes/comment tokens are rejected (injection-safe).
 
+## Use it in your app (as a library)
+
+The published package works exactly like this repo:
+
+```bash
+npm i arkiv-sync          # or scaffold a whole project: npm create arkiv-sync@latest my-indexer
+```
+
+```ts
+import { createIndexer, defineConfig, createArkivReader, addr, uint, days } from 'arkiv-sync'
+```
+
+- **Coercers** — `addr()` / `uint()` / `lower()` validate event args in `map()`, so a mistyped arg name **throws** instead of silently storing the string `"undefined"`.
+- **Safe predicates** — build queries from untrusted values with `quoteValue()` / `assertSafePredicate()` (the same guard the reader uses); never string-concatenate raw user input.
+- **Always pass `owner`** to `reader.query(...)` — the Arkiv store is shared/public, so an un-scoped read returns everyone's entities.
+
 ## How it works (the hard parts, handled in code)
 
 - **Reorgs** — indexes only `head − confirmations` (default is per-chain: Sepolia 6 · ETH 24 · Base 40 · BSC 75); tracks recent block hashes; on a reorg it rolls back to the common ancestor and **re-derives**, deleting orphaned events via an owner-scoped block-range reconciliation (query-based, at any depth; detection covers the recent `reorgWindow` blocks). A transient RPC error is never mistaken for a reorg (it throws → retry, vs a genuinely-absent block).
@@ -113,6 +129,22 @@ Built-in source chains (set `source.chain` to one of these keys): **`ethereum`**
 **Mainnets are READ-ONLY here.** Reading a contract's logs signs nothing and spends nothing, so indexing **mainnet** events is safe. The only thing that holds a key is the **sink** — which is always Arkiv/**Braga testnet**. So: source = any chain (mainnet or testnet), sink = Braga. The sink is likewise swappable (Braga decommissions ~Sep 2026 — this is a reference implementation + demo + friction sensor, not a mass-onboarding to Braga).
 
 > RPC notes (verified 2026-06-15): BSC's official `bsc-dataseed*` seeds **disable `eth_getLogs`** (and the bnbchain testnet seed rate-limits it), so they're excluded — publicnode/1rpc/drpc are used. Public endpoints are best-effort; set your own RPC via `source.rpcUrls` for sustained load.
+
+## Going to mainnet (the sink)
+
+The sink is **testnet-locked by default** (Braga). When Arkiv mainnet launches, the swap is **one config field** — pass an `arkivNetwork` and opt in with `allowMainnet: true` (or `ARKIV_ALLOW_MAINNET=1`):
+
+```ts
+import { defineConfig, type ArkivNetwork } from 'arkiv-sync'
+
+const ARKIV_MAINNET: ArkivNetwork = {
+  chain: /* the arkiv-mainnet viem chain */, name: 'arkiv:mainnet', isTestnet: false,
+  explorerUrl: 'https://explorer.…',
+}
+export default defineConfig({ /* …source… */, arkivNetwork: ARKIV_MAINNET, allowMainnet: true })
+```
+
+Guards that always hold (in `assertWritableChain`): a known **EVM mainnet** id (Ethereum/Base/BSC/…) is **never** a valid sink, the RPC's `chainId` must match the configured network, and a non-testnet network is refused without the explicit opt-in. With real funds, sign with a secure signer (KMS/HSM), not a raw `.env` key.
 
 ## Project structure
 
@@ -140,7 +172,7 @@ Scripts: `npm start` · `npm run smoke` · `npm test` · `npm run typecheck` · 
 Verified on this machine (Node 22.22.3), **2026-06-15**:
 
 - ✅ `npm run typecheck` — 0 errors.
-- ✅ `npm test` — 13/13 (time helpers, idempotency/dedup, restart-resume, reorg detection, reorg re-derivation with orphan deletion, reconcile scoped per-sync, deep-reorg, batch path, events-per-tick cap, config-fingerprint refusal).
+- ✅ `npm test` — 19/19 (time helpers, idempotency/dedup, restart-resume, reorg detection + re-derivation + per-sync reconcile + deep-reorg, events-per-tick cap, config-fingerprint refusal, **quote-aware predicate-injection rejection, file-cursor fingerprint round-trip, sink chain policy, fromBlock>head guard, addr/uint coercers + secret scrubbing**).
 - ✅ `npm run smoke` — **live** Sepolia → Arkiv (Braga) → query, real transactions on the burner wallet (`0x6A79…E274`), cost ~1–3 ×10⁻⁸ GLM/event.
 - ✅ **Template final smoke** — `create-arkiv-sync` → `npm install` (packaged tarball) → `npm run verify` indexed a live Sepolia block into Braga and queried it back from the installed package.
 - ✅ **Published + hosted** — `arkiv-sync@0.1.0` + `create-arkiv-sync@0.1.0` live on npm (2026-06-15), so `npm create arkiv-sync@latest` works end-to-end. Hosted demo at https://arkiv-indexer.vercel.app (`web-demo/` — bounded serverless that **dogfoods the published package**; verified live: read Sepolia → write Braga → query back).

@@ -13,9 +13,12 @@ Library: [`arkiv-sync`](https://www.npmjs.com/package/arkiv-sync). Human docs: [
    the faucet → https://braga.hoodi.arkiv.network/faucet/ . Put it in `.env` as `PRIVATE_KEY=0x…`.
    `.env` is gitignored — **never commit it, never use a key with real funds.** If they don't have one,
    walk them through the faucet first.
-2. **What to index:** the **contract address**, the **chain** (Sepolia today), and the **event
-   signature(s)** — e.g. `Transfer(address indexed from, address indexed to, uint256 value)`. The
-   signatures must match the contract EXACTLY, `indexed` keywords included, or nothing decodes.
+2. **What to index:** the **contract address**, the **chain**, and the **event signature(s)** —
+   e.g. `Transfer(address indexed from, address indexed to, uint256 value)`. The signatures must
+   match the contract EXACTLY, `indexed` keywords included, or nothing decodes. Built-in source
+   chains (by string key): `ethereum`, `sepolia`, `base`, `base-sepolia`, `bsc`, `bsc-testnet`
+   (mainnets are READ-ONLY — reading logs signs nothing; the sink stays Braga testnet). Set your own
+   RPC with `<CHAIN>_RPC_URL` (e.g. `BASE_RPC_URL`) if needed.
 3. **What they want to build** (an activity feed, leaderboard, notifications, analytics dashboard,
    an AI-agent trigger…). This shapes `map()` — which fields become queryable `attributes`.
 
