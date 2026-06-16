@@ -71,9 +71,12 @@ export function scrubSecrets(input: unknown): string {
   s = s.replace(/0x[0-9a-fA-F]{64}/g, '0x<redacted>')
   // a bare 64-hex private key without 0x
   s = s.replace(/\b[0-9a-fA-F]{64}\b/g, '<redacted>')
-  // credentials embedded in a URL (e.g. a token in ARKIV_RPC_URL): user:pass@ and ?key=/&token=…
+  // credentials embedded in a URL (e.g. a token in ARKIV_RPC_URL): user:pass@ and ?key=/&token=/#token=…
   s = s.replace(/(https?:\/\/)[^/@\s]+@/gi, '$1<redacted>@')
-  s = s.replace(/([?&](?:api[-_]?key|key|token|secret|access[-_]?token)=)[^&\s"']+/gi, '$1<redacted>')
+  s = s.replace(
+    /([?&#](?:api[-_]?key|key|token|secret|client[-_]?secret|password|passwd|pwd|auth|authorization|access[-_]?token)=)[^&\s"']+/gi,
+    '$1<redacted>',
+  )
   return s
 }
 

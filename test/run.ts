@@ -5,6 +5,7 @@
  */
 import type {
   BlockHeader,
+  CursorStore,
   Hex,
   NormalizedEvent,
   Sink,
@@ -224,7 +225,7 @@ class MemorySink implements Sink {
 function makeIndexer(
   source: MockSource,
   sink: MemorySink,
-  store: MemoryCursorStore,
+  store: CursorStore,
   opts: Partial<{
     confirmations: number
     reorgWindow: number
@@ -606,6 +607,47 @@ async function main() {
     assert(!scrubbed.includes('secretpass'), 'URL userinfo redacted')
     assert(!scrubbed.includes('ABC123XYZ'), 'URL apikey redacted')
     assert(!scrubbed.includes('a'.repeat(64)), '64-hex key redacted')
+  })
+
+  // ── reorg recovery beyond safeHead must report upToDate=false (codex R2 bug #4) ──
+  await test('reorg with recovery beyond safeHead reports upToDate=false', async () => {
+    const source = new MockSource()
+    source.build(11, 1, 'a') // head 10, safeHead 8 → index 0..8
+    const ix = makeIndexer(source, new MemorySink(), new MemoryCursorStore())
+    await ix.init()
+    await ix.runOnce()
+    source.reorgFrom(7, 10, 1, 'b') // head 9, safeHead 7; old tip 8 orphaned → recoverUntil 8 > safeHead 7
+    const r = await ix.runOnce()
+    assert(r.reorged, 'reorg detected')
+    assert(!r.upToDate, 'upToDate=false while recovery (8) extends beyond safeHead (7)')
+  })
+
+  // ── fingerprintless cursor adopts + PERSISTS, then a different config is refused (codex R2 bug #2) ──
+  await test('adopted fingerprint persists, then a different config is refused', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'arkiv-fp-'))
+    try {
+      const source = new MockSource()
+      source.build(11, 1, 'a')
+      const store = new FileCursorStore(dir)
+      // Pre-seed a legacy cursor with NO fingerprint.
+      await store.save('11155111-test', { chainId: 11155111, lastProcessedBlock: 5n, blockHashes: {} })
+      // Indexer A adopts its fingerprint AND persists it (even before any tick saves).
+      const ixA = makeIndexer(source, new MemorySink(), store, { configFingerprint: 'cfg-A' })
+      await ixA.init()
+      const after = await store.load('11155111-test')
+      eq(after!.configFingerprint, 'cfg-A', 'adopted fingerprint was persisted to the file')
+      // Indexer B with a DIFFERENT fingerprint must now refuse (the refusal sticks across restarts).
+      const ixB = makeIndexer(source, new MemorySink(), store, { configFingerprint: 'cfg-B' })
+      let threw = false
+      try {
+        await ixB.init()
+      } catch {
+        threw = true
+      }
+      assert(threw, 'a different config is refused after the adopted fingerprint was persisted')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   // ── report ──

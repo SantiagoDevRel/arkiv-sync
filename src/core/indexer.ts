@@ -164,8 +164,13 @@ export class Indexer {
         )
       }
       this.cursor = loaded
-      // Adopt a fingerprint onto a pre-fingerprint cursor (forward-compatible upgrade).
-      if (this.configFingerprint && !loaded.configFingerprint) loaded.configFingerprint = this.configFingerprint
+      // Adopt a fingerprint onto a pre-fingerprint cursor AND persist it immediately — otherwise an
+      // idle first tick never saves, so a LATER different config would also "adopt" (in memory) instead
+      // of being refused. Saving now makes the refusal stick across restarts.
+      if (this.configFingerprint && !loaded.configFingerprint) {
+        loaded.configFingerprint = this.configFingerprint
+        await this.cursorStore.save(this.cursorId, loaded)
+      }
       this.log.info(`resuming ${this.cursorId} from block ${loaded.lastProcessedBlock}`)
     } else {
       let start: bigint
@@ -330,7 +335,9 @@ export class Indexer {
     pruneCursorWindow(cursor, lo)
     await this.cursorStore.save(this.cursorId, cursor)
 
-    const upToDate = toB >= safeHead
+    // Not actually caught up if a reorg recovery is still pending BEYOND safeHead (recoverUntil set):
+    // there are orphans left to reconcile once the chain re-grows, so keep the driver ticking.
+    const upToDate = toB >= safeHead && recoverUntil === undefined
     const lagBlocks = safeHead > toB ? safeHead - toB : 0n
     this.onActivity?.({
       kind: 'tick',
@@ -371,7 +378,11 @@ export class Indexer {
         } else {
           lagWarned = false
         }
-        await sleep(r.upToDate ? this.pollIntervalMs : 250)
+        // Fast-tick (250ms) ONLY while making forward progress (draining a backfill). When idle OR
+        // stalled — caught up, or a recovery is pending but the chain shrank with no progress — use the
+        // poll interval so we don't busy-poll the RPC.
+        const progressing = !r.upToDate && (r.processed > 0 || r.written > 0)
+        await sleep(progressing ? 250 : this.pollIntervalMs)
       } catch (err) {
         failures++
         this.log.error(`tick failed (${failures}/${this.maxConsecutiveFailures}), retrying in ${backoff}ms`, scrubSecrets(err))

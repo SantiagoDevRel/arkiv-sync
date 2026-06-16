@@ -48,7 +48,10 @@ export const BRAGA_NETWORK: ArkivNetwork = {
 
 /** Well-known EVM mainnet chain ids — NEVER a valid Arkiv sink, even with allowMainnet (defense
  *  against pointing the writer at Ethereum/Base/BSC/etc. by misconfig). */
-const KNOWN_MAINNETS = new Set([1, 10, 56, 100, 137, 250, 8453, 42161, 43114, 59144, 534352])
+const KNOWN_MAINNETS = new Set([
+  1, 10, 25, 56, 100, 137, 204, 250, 324, 1101, 1284, 5000, 8453, 34443, 42161, 42220, 43114, 59144, 81457,
+  534352, 7777777, 1313161554,
+])
 
 export interface ArkivSinkOptions {
   /** A 0x + 64-hex private key (from .env). Signs locally; never leaves the machine. On a testnet
@@ -146,7 +149,8 @@ export class ArkivSink implements Sink {
     this.log = opts.logger
     this.network = opts.network ?? BRAGA_NETWORK
     this.allowMainnet = opts.allowMainnet ?? process.env.ARKIV_ALLOW_MAINNET === '1'
-    this.batchSize = Math.max(1, opts.batchSize ?? BATCH_SIZE)
+    // Guard against NaN/0/negatives/floats — a bad batchSize would make chunking misbehave.
+    this.batchSize = Number.isInteger(opts.batchSize) && (opts.batchSize as number) > 0 ? (opts.batchSize as number) : BATCH_SIZE
     this.name = this.network.name
     this.account = privateKeyToAccount(key)
     const transport = http(opts.rpcUrl) // undefined → SDK uses the network's default RPC
