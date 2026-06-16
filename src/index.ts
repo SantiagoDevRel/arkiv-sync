@@ -35,6 +35,9 @@ export {
   type ArkivReaderOptions,
 } from './sink/arkivQuery.js'
 
+// Safe predicate builders — for consumers composing queries from (untrusted) values.
+export { quoteValue, assertSafePredicate, assertSafeOwner } from './sink/predicate.js'
+
 // Helpers.
 export { seconds, minutes, hours, days, weeks, describeSeconds } from './time.js'
 export { createLogger, silentLogger } from './log.js'

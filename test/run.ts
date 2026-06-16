@@ -15,7 +15,7 @@ import type {
 import { Indexer, type IndexerActivity } from '../src/core/indexer.js'
 import { FileCursorStore, MemoryCursorStore } from '../src/core/cursor.js'
 import { detectReorg } from '../src/core/reorg.js'
-import { scopeToOwner, quoteValue } from '../src/sink/predicate.js'
+import { scopeToOwner, quoteValue, assertSafePredicate } from '../src/sink/predicate.js'
 import { silentLogger } from '../src/log.js'
 import { days, hours, seconds } from '../src/time.js'
 import { eventId, stableStringify } from '../src/util.js'
@@ -512,6 +512,21 @@ async function main() {
       qv = true
     }
     assert(qv, 'quoteValue rejects an embedded quote')
+    let bs = false
+    try {
+      quoteValue('a\\b')
+    } catch {
+      bs = true
+    }
+    assert(bs, 'quoteValue rejects a backslash')
+    // no-owner queries still get injection-validated
+    let unsafe = false
+    try {
+      assertSafePredicate('a = 1) || (1=1')
+    } catch {
+      unsafe = true
+    }
+    assert(unsafe, 'assertSafePredicate rejects an unbalanced raw predicate')
   })
 
   // ── FileCursorStore must persist configFingerprint (the production cursor guard) ──

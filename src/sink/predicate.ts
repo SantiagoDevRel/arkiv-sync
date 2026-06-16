@@ -16,8 +16,8 @@ export function assertSafeOwner(owner: string): void {
 
 /** Quote a string value for a predicate, refusing anything that could escape the quotes. */
 export function quoteValue(value: string): string {
-  if (value.includes('"') || COMMENT_TOKENS.test(value)) {
-    throw new Error('Query value may not contain a double quote or comment token.')
+  if (value.includes('"') || value.includes('\\') || COMMENT_TOKENS.test(value)) {
+    throw new Error('Query value may not contain a double quote, backslash, or comment token.')
   }
   return `"${value}"`
 }
@@ -59,13 +59,23 @@ function assertBalanced(predicate: string): void {
  * predicate fails closed. Combined with balanced-paren/quote validation, the owner constraint can't
  * be escaped (no early `)` + `||`, no comment-token swallow, no quote break-out).
  */
+/**
+ * Validate a standalone predicate is injection-safe (no comment tokens, balanced parens/quotes).
+ * Use this whenever a predicate may contain caller-supplied values, even with no owner wrap.
+ */
+export function assertSafePredicate(predicate: string): void {
+  const trimmed = predicate.trim()
+  if (!trimmed) return
+  if (COMMENT_TOKENS.test(trimmed)) {
+    throw new Error('Query may not contain comment tokens (/* */ // -- #).')
+  }
+  assertBalanced(trimmed)
+}
+
 export function scopeToOwner(predicate: string, owner: string): string {
   assertSafeOwner(owner)
   const trimmed = predicate.trim()
   if (!trimmed) return `$owner = ${owner}`
-  if (COMMENT_TOKENS.test(trimmed)) {
-    throw new Error('Query may not contain comment tokens (/* */ // -- #) when owner-scoped.')
-  }
-  assertBalanced(trimmed)
+  assertSafePredicate(trimmed)
   return `($owner = ${owner}) && (${trimmed})`
 }

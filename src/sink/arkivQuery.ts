@@ -1,7 +1,7 @@
 import { createPublicClient, http, type Attribute, type PublicArkivClient } from '@arkiv-network/sdk'
 import { braga } from '@arkiv-network/sdk/chains'
 import type { Hex } from '../types.js'
-import { scopeToOwner } from './predicate.js'
+import { assertSafePredicate, scopeToOwner } from './predicate.js'
 
 /**
  * Read-side helper for the DERIVED Arkiv database. This is what an app's frontend/backend
@@ -25,7 +25,8 @@ export interface ArkivReaderOptions {
 export interface QueryParams {
   /** Max results in this page (Arkiv pagination is limit + cursor). Default 25. */
   limit?: number
-  /** Scope to a single writer (recommended — the Arkiv store is shared/public). */
+  /** Scope to a single writer (STRONGLY recommended — the Arkiv store is shared/public; omitting
+   * this queries the ENTIRE shared store across all writers). */
   owner?: Hex
   cursor?: string
   /** Client-side sort over the returned page (Arkiv has no server-side orderBy). */
@@ -81,8 +82,15 @@ export function createArkivReader(opts: ArkivReaderOptions = {}): ArkivReader {
 
   async function query(predicate: string, params: QueryParams = {}): Promise<DecodedEntity[]> {
     const { limit = 25, owner, cursor, sortBy, sortDir = 'desc' } = params
-    // Owner-scope is injection-safe (owner clause first, validated). The shared store demands it.
-    const pred = owner ? scopeToOwner(predicate, owner) : predicate
+    // The Arkiv store is shared/public, so reads SHOULD be owner-scoped. Owner-scoping is injection-safe
+    // (owner clause first, balanced/comment-validated). If `owner` is omitted you query the ENTIRE shared
+    // store, so we still injection-validate the raw predicate before sending it.
+    let pred: string
+    if (owner) pred = scopeToOwner(predicate, owner)
+    else {
+      assertSafePredicate(predicate)
+      pred = predicate
+    }
     const res = await pub.query(pred, {
       includeData: { attributes: true, payload: true, metadata: true },
       resultsPerPage: limit,
