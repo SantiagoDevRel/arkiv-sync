@@ -13,7 +13,7 @@ metadata:
   arkiv.surface: "defineConfig, createIndexer, quickCheck, normalizeAddresses, Indexer, EvmSource, ArkivSink, createArkivReader, SOURCE_CHAINS, resolveSourceChain, FileCursorStore, MemoryCursorStore, detectReorg, seconds, minutes, hours, days, weeks, describeSeconds, eventId, createLogger, silentLogger, NormalizedEvent, EventMapper, MappedEntity, Sink, SourceAdapter, QueryParams, DecodedEntity"
   arkiv.internal-deps: "viem(getLogs, parseAbiItem, fallback) + @arkiv-network/sdk(createEntity, updateEntity, mutateEntities, query) are used INTERNALLY by arkiv-sync and are NOT re-exported — import them from their own packages if you need them directly."
   arkiv.last-verified-at: "2026-06-15"
-  arkiv.evidence: "engine verified end-to-end on live Sepolia→Braga (smoke) + 13 unit tests (dedup/resume/reorg/reconcile-scope/deep-reorg/event-cap/fingerprint)"
+  arkiv.evidence: "engine verified end-to-end on live Sepolia→Braga (smoke) + 19 unit tests (dedup/resume/reorg/reconcile-scope/deep-reorg/event-cap/fingerprint/predicate-injection/file-cursor/chain-policy/fromBlock-guard/coercers); 3-model adversarial audit (claude + codex + agy)"
 ---
 
 # arkiv-sync

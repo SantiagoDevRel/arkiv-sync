@@ -92,7 +92,8 @@ const rows = await reader.query('event = "Transfer"', {
   limit: 25,
   sortBy: 'block', sortDir: 'desc', // client-side sort (Arkiv has no server-side orderBy)
 })
-// rows[i] = { key, attributes: {from,to,value,block,…}, data: <decoded event> }
+// rows[i] = { key, owner, attributes: {from,to,value,block,…}, data, expiresAtBlock }
+// `data` defaults to { event, chainId, contract, block, blockHash, tx, logIndex, args } (args nested under .args)
 ```
 
 Predicate operators: `=`, `!=`, numeric `>`/`>=`/`<`/`<=`, combined with `&&`/`||`. String values use double quotes; values containing quotes/comment tokens are rejected (injection-safe).
@@ -112,6 +113,7 @@ import { createIndexer, defineConfig, createArkivReader, addr, uint, days } from
 - **Coercers** — `addr()` / `uint()` / `lower()` validate event args in `map()`, so a mistyped arg name **throws** instead of silently storing the string `"undefined"`.
 - **Safe predicates** — build queries from untrusted values with `quoteValue()` / `assertSafePredicate()` (the same guard the reader uses); never string-concatenate raw user input.
 - **Always pass `owner`** to `reader.query(...)` — the Arkiv store is shared/public, so an un-scoped read returns everyone's entities.
+- **Multiple indexers on one wallet?** Give each a distinct `label` — reorg reconciliation is scoped per-indexer (a `sync` attribute), so they never delete each other's entities.
 
 ## How it works (the hard parts, handled in code)
 
