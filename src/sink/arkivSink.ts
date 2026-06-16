@@ -234,24 +234,31 @@ export class ArkivSink implements Sink {
     }
   }
 
-  /** ONE paged lookup of OUR existing entities for a sync + block range → Map<eventId,{key,contentHash}>. */
+  /** ONE paged lookup of OUR existing entities for a sync + block range → Map<eventId,{key,contentHash}>.
+   *  Returns null (caller falls back to bounded per-event lookups) when the range holds FAR more
+   *  entities than this batch, so a polluted/dense same-sync range can't blow up memory with an
+   *  unbounded scan. */
   private async findExistingByRange(
     sync: string,
     fromBlock: number,
     toBlock: number,
-  ): Promise<Map<string, { key: Hex; contentHash?: string }>> {
+    maxRows: number,
+  ): Promise<Map<string, { key: Hex; contentHash?: string }> | null> {
     const predicate = scopeToOwner(
       `sync = ${quoteValue(sync)} && block >= ${fromBlock} && block <= ${toBlock}`,
       this.account.address,
     )
     const map = new Map<string, { key: Hex; contentHash?: string }>()
     let cursor: string | undefined
+    let scanned = 0
     do {
       const res = await this.pub.query(predicate, {
         includeData: { attributes: true, metadata: false, payload: false },
         resultsPerPage: 200,
         cursor,
       })
+      scanned += res.entities.length
+      if (scanned > maxRows) return null // range far larger than the batch → bail to per-event (bounded memory)
       for (const e of res.entities) {
         const attrs = (e.attributes ?? []) as Attribute[]
         const eid = attrs.find((a) => a.key === 'eventId')?.value
@@ -332,17 +339,19 @@ export class ArkivSink implements Sink {
       const blockNums = unique.map((r) => Number(attrOf(r, 'block')))
       const allBlocks = blockNums.every((n) => Number.isFinite(n))
 
-      let existingMap: Map<string, { key: Hex; contentHash?: string }>
+      let existingMap: Map<string, { key: Hex; contentHash?: string }> | null = null
       if (sameSync && allBlocks) {
         const lo = blockNums.reduce((a, b) => (b < a ? b : a), blockNums[0]!)
         const hi = blockNums.reduce((a, b) => (b > a ? b : a), blockNums[0]!)
-        existingMap = await this.findExistingByRange(syncId, lo, hi)
-      } else {
+        // Bound the bulk scan to a few× the batch; a far-larger range returns null → per-event fallback.
+        existingMap = await this.findExistingByRange(syncId, lo, hi, Math.max(unique.length * 3, 2000))
+      }
+      if (!existingMap) {
         existingMap = new Map()
         const found = await mapLimit(prepared, FIND_CONCURRENCY, (p) => this.findByEventId(p.record.eventId))
         prepared.forEach((p, i) => {
           const f = found[i]
-          if (f) existingMap.set(p.record.eventId, f)
+          if (f) existingMap!.set(p.record.eventId, f)
         })
       }
 

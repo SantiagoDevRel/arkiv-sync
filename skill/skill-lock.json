@@ -12,7 +12,7 @@
     "querying the derived database",
     "multichain via source adapters"
   ],
-  "npm": { "package": "arkiv-sync", "version": "0.2.1", "bin": "arkiv-sync", "create": "create-arkiv-sync" },
+  "npm": { "package": "arkiv-sync", "version": "0.2.2", "bin": "arkiv-sync", "create": "create-arkiv-sync" },
   "sdk": { "package": "@arkiv-network/sdk", "range": ">=0.6.5 <0.7.0", "verified": "0.6.8" },
   "viem": { "range": "^2.38.2", "note": "direct dependency: the source reads a non-Arkiv chain" },
   "node": { "range": ">=20 <24", "note": "Node 24 hangs Arkiv entity updates (arkiv-sdk-js #14)" },

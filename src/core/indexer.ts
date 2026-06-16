@@ -259,7 +259,19 @@ export class Indexer {
     let effectiveTo = fromB - 1n
     for (let step = fromB; step <= toB; ) {
       const end = step + this.fetchStepBlocks - 1n < toB ? step + this.fetchStepBlocks - 1n : toB
-      const chunk = await this.source.getEvents(step, end)
+      let chunk: NormalizedEvent[]
+      try {
+        chunk = await this.source.getEvents(step, end)
+      } catch (err) {
+        // Mid-range fetch failure (e.g. a tail 429 on a flaky RPC during a big backfill): if we already
+        // fetched a prefix, COMMIT it (advance the cursor to the last fully-fetched block) and resume next
+        // tick — don't discard head progress. With no prefix yet, rethrow so the loop backs off + retries.
+        if (effectiveTo >= fromB) {
+          this.log.warn(`partial fetch ${fromB}-${toB}: committing ${fromB}-${effectiveTo}, resuming after. (${scrubSecrets(err)})`)
+          break
+        }
+        throw err
+      }
       for (const e of chunk) events.push(e)
       effectiveTo = end
       step = end + 1n

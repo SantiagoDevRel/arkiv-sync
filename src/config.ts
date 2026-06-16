@@ -54,6 +54,9 @@ export interface ArkivSyncConfig {
   arkivNetwork?: ArkivNetwork
   /** Opt in to writing to a NON-testnet arkivNetwork (real funds). Default false (or ARKIV_ALLOW_MAINNET=1). */
   allowMainnet?: boolean
+  /** Entities per mutateEntities tx (the sink write batch). Default 50; clamped to 1000. Raise toward
+   *  1000 for higher single-wallet throughput (~150–500 ev/s); bigger batch = bigger atomic blast radius. */
+  sinkBatchSize?: number
   /** Cursor namespace label. Default: derived from the first contract address. */
   label?: string
   logger?: Logger
@@ -129,6 +132,7 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
     logger,
     network: config.arkivNetwork,
     allowMainnet: config.allowMainnet,
+    batchSize: config.sinkBatchSize,
   })
 }
 

@@ -78,6 +78,7 @@ class MockSource implements SourceAdapter {
   readonly name = 'mock'
   private blocks: MockBlock[] = []
   head = 0n
+  throwGetEventsAbove?: number // test hook: getEvents throws when `to` exceeds this (simulate a tail 429)
 
   /** Build `n` contiguous blocks (0..n-1), each with `perBlock` events, salted by `salt`. */
   build(n: number, perBlock = 1, salt = 'a') {
@@ -125,6 +126,9 @@ class MockSource implements SourceAdapter {
     return { number: b.number, hash: b.hash, parentHash: b.parentHash }
   }
   async getEvents(from: bigint, to: bigint): Promise<NormalizedEvent[]> {
+    if (this.throwGetEventsAbove !== undefined && Number(to) > this.throwGetEventsAbove) {
+      throw new Error('simulated RPC 429')
+    }
     const out: NormalizedEvent[] = []
     for (let n = from; n <= to; n++) {
       const b = this.blocks[Number(n)]
@@ -667,6 +671,24 @@ async function main() {
       msg = (e as Error).message
     }
     assert(/must be a string or number/.test(msg), `a boolean attribute must throw clearly (got: ${msg})`)
+  })
+
+  // ── a mid-range fetch failure commits the fetched prefix and resumes (no head discard) ──
+  await test('a mid-range fetch failure commits the prefix and resumes next tick', async () => {
+    const source = new MockSource()
+    source.build(11, 1, 'a') // head 10, safeHead 8 (confirmations 2)
+    source.throwGetEventsAbove = 5 // getEvents throws once `to` > 5
+    const sink = new MemorySink()
+    const store = new MemoryCursorStore()
+    const ix = makeIndexer(source, sink, store, { fetchStepBlocks: 1 })
+    await ix.init()
+    const r1 = await ix.runOnce() // fetch 0..5, fail at 6 → commit prefix 0..5
+    eq(r1.written, 6, 'committed the fetched prefix (blocks 0..5)')
+    eq(sink.store.size, 6, 'prefix persisted')
+    assert(!r1.upToDate, 'not caught up — the tail was not fetched')
+    source.throwGetEventsAbove = undefined // RPC recovers
+    await ix.runOnce() // resumes 6..8
+    eq(sink.store.size, 9, 'resumes after the failure → total blocks 0..8')
   })
 
   // ── report ──
