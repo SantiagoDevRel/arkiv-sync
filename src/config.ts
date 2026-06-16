@@ -29,7 +29,7 @@ export interface ArkivSyncConfig {
     events: string[]
     /** Where to begin: a block number, or 'latest' (only new events). Default 'latest'. */
     fromBlock?: bigint | number | 'latest'
-    /** Stay this many blocks behind the head before treating data as final. Default 5. */
+    /** Stay this many blocks behind the head before treating data as final. Default: per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75). */
     confirmations?: number
     /** Poll cadence when caught up (ms). Default 12000. */
     pollIntervalMs?: number

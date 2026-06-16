@@ -77,7 +77,7 @@ export default defineConfig({
 })
 ```
 
-The indexer always adds system attributes — `eventId, chainId, contract, event, block` (reserved; don't set them in `map`).
+The indexer always adds system attributes — `eventId, contentHash, chainId, contract, event, block, sync` (reserved; setting any in `map` throws).
 
 ## Query the derived database
 
@@ -97,7 +97,7 @@ Predicate operators: `=`, `!=`, numeric `>`/`>=`/`<`/`<=`, combined with `&&`/`|
 
 ## How it works (the hard parts, handled in code)
 
-- **Reorgs** — indexes only `head − confirmations` (default 5); tracks recent block hashes; on a reorg it rolls back to the common ancestor and **re-derives**, deleting orphaned events via an owner-scoped block-range reconciliation (works across ticks and at any depth up to `reorgWindow`). A transient RPC error is never mistaken for a reorg (it throws → retry, vs a genuinely-absent block).
+- **Reorgs** — indexes only `head − confirmations` (default is per-chain: Sepolia 6 · ETH 24 · Base 40 · BSC 75); tracks recent block hashes; on a reorg it rolls back to the common ancestor and **re-derives**, deleting orphaned events via an owner-scoped block-range reconciliation (query-based, at any depth; detection covers the recent `reorgWindow` blocks). A transient RPC error is never mistaken for a reorg (it throws → retry, vs a genuinely-absent block).
 - **Idempotency** — every event's key is `chainId:txHash:logIndex`; writes are create-or-skip by a sha256 content hash, so restarts and overlaps never duplicate.
 - **Cursor** — persisted atomically to `.arkiv-sync/` (write-then-rename); the worker resumes exactly where it stopped.
 - **Zero-friction RPCs** — a viem `fallback` pool over public Sepolia endpoints with automatic rotation; a throttled/dead endpoint is skipped silently. Set `SEPOLIA_RPC_URL` for your own. `getLogs` auto-splits when an RPC rejects a too-wide range.

@@ -35,8 +35,9 @@ If `verify` reports 0 events, the event signature almost certainly doesn't match
 
 - **Node 20–22, NEVER Node 24** (Node 24 silently hangs Arkiv entity updates).
 - **TTL is in SECONDS** — use `days()/hours()/minutes()` from `arkiv-sync`. Never milliseconds.
-- **Attribute values are `string | number`** — coerce bigint with `String()` (e.g. uint256 amounts).
-- **Don't set the reserved attributes** `eventId, chainId, contract, event, block` in `map` — the engine adds them.
+- **Attribute values must be `string | number`** — coerce bigint with `String()` (e.g. uint256 amounts); put richer structures in `data`.
+- **Don't set the reserved attributes** `eventId, contentHash, chainId, contract, event, block, sync` in `map` — the engine sets them, and a `map` that returns any of these **throws at runtime** (rename a colliding event arg, e.g. a `Sync` arg → `syncReserves`).
+- **`map()` may return `null` to SKIP an event** (e.g. filter by a field). The `attributes` it returns become extra queryable fields; `data` overrides the stored payload (defaults to the decoded event).
 - **Reads are owner-scoped** — always pass `owner` to `createArkivReader().query()` (the Arkiv store is public/shared).
 - **No `.orderBy()`** — sort client-side (`sortBy`/`sortDir` sort the fetched page; Arkiv has no server-side ordering).
 - Reorgs, idempotency (`chainId:txHash:logIndex`), the cursor, RPC rotation, and the gas preflight are all handled. **Don't reimplement them.**
@@ -50,7 +51,7 @@ const rows = await reader.query('event = "Transfer"', {
   owner: '0xYOUR_INDEXER_WALLET',   // the address of the PRIVATE_KEY in .env
   limit: 25, sortBy: 'block', sortDir: 'desc',
 })
-// rows[i] = { key, attributes: {…}, data: <decoded event> }
+// rows[i] = { key, owner, attributes: {…}, data, expiresAtBlock }
 ```
 
 ## Never
