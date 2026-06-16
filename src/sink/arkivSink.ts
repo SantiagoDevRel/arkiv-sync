@@ -358,12 +358,22 @@ export class ArkivSink implements Sink {
         const cu = chunk.filter((o) => o.kind === 'update')
         if (cc.length) params.creates = cc.map((o) => o.params as never)
         if (cu.length) params.updates = cu.map((o) => o.params as never)
-        const r = await this.wallet.mutateEntities(params) // already inside the write lock
-        const txHash = (r as { txHash?: string }).txHash
+        const r = (await this.wallet.mutateEntities(params)) as {
+          txHash?: string
+          createdEntities?: Hex[]
+          updatedEntities?: Hex[]
+        }
+        // mutateEntities returns the per-entity keys (createdEntities/updatedEntities, in the order we
+        // passed them), so batched writes surface a REAL `key`, not just the tx hash.
+        const created = r.createdEntities ?? []
+        const updated = r.updatedEntities ?? []
+        let ci = 0
+        let ui = 0
         this.writes += chunk.length
         for (const o of chunk) {
-          resultById.set(o.id, { op: o.kind, txHash })
-          onWritten?.({ eventId: o.id, op: o.kind, txHash })
+          const key = o.kind === 'create' ? created[ci++] : updated[ui++]
+          resultById.set(o.id, { op: o.kind, key, txHash: r.txHash })
+          onWritten?.({ eventId: o.id, op: o.kind, key, txHash: r.txHash })
         }
       }
     })
