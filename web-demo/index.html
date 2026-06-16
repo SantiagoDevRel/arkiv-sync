@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'" />
 <title>Arkiv Sync — live demo</title>
 <style>
   :root {
@@ -193,6 +194,10 @@
 
 <script>
 const $ = (id) => document.getElementById(id)
+// Escape ALL on-chain / decoded values before innerHTML — a contract can emit event args with HTML/JS
+// (e.g. Message(string) carrying <img onerror=...>); unescaped, that is XSS that could call the
+// same-origin demo APIs and abuse the funded writer.
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const BLOCK_EXPLORER = 'https://explorer.braga.hoodi.arkiv.network'
 const DATA_EXPLORER = 'https://data.arkiv.network'
 // Link by eventId (always present) — batched writes don't return per-entity keys.
@@ -229,8 +234,8 @@ function onSource(a) {
   const feed = $('src'); clearEmpty(feed)
   for (const e of a.events) { // a.events is a display sample (capped); a.count is the true total
     const row = document.createElement('div'); row.className = 'rowi'
-    const args = Object.entries(e.args).map(([k,v]) => `${k}=${short(String(v),10)}`).join(' · ')
-    row.innerHTML = `<span class="blk">#${e.block}</span><span class="ev">${e.event}</span><span class="args" title="${args.replace(/"/g,'&quot;')}">${args}</span>`
+    const args = Object.entries(e.args).map(([k,v]) => `${esc(k)}=${esc(short(String(v),10))}`).join(' · ')
+    row.innerHTML = `<span class="blk">#${esc(e.block)}</span><span class="ev">${esc(e.event)}</span><span class="args" title="${args}">${args}</span>`
     feed.insertBefore(row, feed.firstChild)
   }
   events += a.count // TRUE count of events read (not the capped display sample)
@@ -240,11 +245,11 @@ function onSource(a) {
 function onWrite(a) {
   const feed = $('ark'); clearEmpty(feed)
   const row = document.createElement('div'); row.className = 'rowi'
-  const badge = `<span class="badge b-${a.op}">${a.op}</span>`
+  const badge = `<span class="badge b-${esc(a.op)}">${esc(a.op)}</span>`
   const id = short(a.eventId, 14)
   const verify = `<a class="lnk" href="${entityUrl(a.eventId)}" target="_blank" title="Ver esta entidad guardada en el Arkiv Data Explorer">🔍 ver</a>`
-  const tx = a.txHash ? `<a class="lnk" href="${BLOCK_EXPLORER}/tx/${a.txHash}" target="_blank" title="La transacción on-chain que la escribió">⛓ tx</a>` : `<span></span>`
-  row.innerHTML = `<span class="blk">#${a.block}</span>${badge}<span class="args" title="${a.eventId}">${id}</span>${verify}${tx}`
+  const tx = a.txHash ? `<a class="lnk" href="${BLOCK_EXPLORER}/tx/${encodeURIComponent(a.txHash)}" target="_blank" title="La transacción on-chain que la escribió">⛓ tx</a>` : `<span></span>`
+  row.innerHTML = `<span class="blk">#${esc(a.block)}</span>${badge}<span class="args" title="${esc(a.eventId)}">${esc(id)}</span>${verify}${tx}`
   feed.insertBefore(row, feed.firstChild); arkRows++
   if (a.op !== 'skip') { written++; writeTimes.push(Date.now()) } else { skips++ }
   if (writingTarget > 0) { writingDone++; updateWriting() }
@@ -397,7 +402,7 @@ $('queryBtn').onclick = async () => {
       const div = document.createElement('div'); div.className = 'rowi'
       const blk = (row.attributes && row.attributes.block) ?? '—', ev = (row.attributes && row.attributes.event) || ''
       const verify = `<a class="lnk" href="${DATA_EXPLORER}/?q=${encodeURIComponent('$key = "' + row.key + '"')}" target="_blank" title="Ver esta entidad en el Data Explorer">🔍 ver</a>`
-      div.innerHTML = `<span class="blk">#${blk}</span><span class="badge b-update">query</span><span class="args" title="${row.key}">${ev} · ${short(row.key, 14)}</span>${verify}<span></span>`
+      div.innerHTML = `<span class="blk">#${esc(blk)}</span><span class="badge b-update">query</span><span class="args" title="${esc(row.key)}">${esc(ev)} · ${esc(short(row.key, 14))}</span>${verify}<span></span>`
       feed.appendChild(div)
     }
   } catch (e) { feed.innerHTML = '<div class="empty">Error consultando: ' + (e.message || e) + '</div>' }
