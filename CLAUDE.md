@@ -4,6 +4,8 @@
 
 > Read [`README.md`](./README.md) first — it has the full architecture, requirements, quickstart, and the verification status.
 
+> **Status (2026-06-15):** PUBLISHED — `arkiv-sync` + `create-arkiv-sync` on npm (account `santiagodevrel`); hosted live demo at https://arkiv-indexer.vercel.app (`web-demo/` — bounded serverless on Vercel team `santiago-hobby`, dogfoods the published package). NPM publish needs an **automation token** (2FA-bypass) in `.env` as `NPM_TOKEN`. The `web-demo/` is a private package (not published).
+
 ## Architecture (3 modes, don't conflate)
 
 - **npm library** = the RUNTIME (`src/`). The 24/7 worker. This is the backbone.

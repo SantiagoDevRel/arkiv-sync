@@ -10,6 +10,8 @@ Arkiv is a **queryable database on Ethereum** (think Supabase/Postgres, not "a b
      RPC pool + rotation             reorg · cursor · TTL        (no RPC, no gas)
 ```
 
+**Live demo:** https://arkiv-indexer.vercel.app · **Install:** `npm create arkiv-sync@latest` ([npm](https://www.npmjs.com/package/arkiv-sync))
+
 ---
 
 ## Three modes (don't overlap)
@@ -141,6 +143,7 @@ Verified on this machine (Node 22.22.3), **2026-06-15**:
 - ✅ `npm test` — 13/13 (time helpers, idempotency/dedup, restart-resume, reorg detection, reorg re-derivation with orphan deletion, reconcile scoped per-sync, deep-reorg, batch path, events-per-tick cap, config-fingerprint refusal).
 - ✅ `npm run smoke` — **live** Sepolia → Arkiv (Braga) → query, real transactions on the burner wallet (`0x6A79…E274`), cost ~1–3 ×10⁻⁸ GLM/event.
 - ✅ **Template final smoke** — `create-arkiv-sync` → `npm install` (packaged tarball) → `npm run verify` indexed a live Sepolia block into Braga and queried it back from the installed package.
+- ✅ **Published + hosted** — `arkiv-sync@0.1.0` + `create-arkiv-sync@0.1.0` live on npm (2026-06-15), so `npm create arkiv-sync@latest` works end-to-end. Hosted demo at https://arkiv-indexer.vercel.app (`web-demo/` — bounded serverless that **dogfoods the published package**; verified live: read Sepolia → write Braga → query back).
 
 ### Load & limits (stress-tested by 3 models)
 

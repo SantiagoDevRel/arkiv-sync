@@ -1,0 +1,7 @@
+# Never upload the local burner key file or build noise — the key lives ONLY as a Vercel env var.
+.env
+.env.*
+node_modules/
+.vercel/
+*.log
+.git

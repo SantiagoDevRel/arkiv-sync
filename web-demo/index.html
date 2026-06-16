@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Arkiv Sync — live demo</title>
+<style>
+  :root {
+    --bg:#0e0f13; --panel:#16181f; --panel2:#1c1f28; --line:#2a2e3a;
+    --ink:#e7e9ee; --dim:#8b90a0; --orange:#fe7446; --blue:#8b8fe8;
+    --green:#5fd08a; --yellow:#e8c84a; --red:#f0746a;
+    --mono:'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+    --ctl:36px;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--mono); font-size:13px; }
+
+  header { padding:14px 18px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .topline { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  h1 { font-size:15px; margin:0; letter-spacing:-0.02em; } h1 b { color:var(--orange); }
+  .state { font-size:12px; } .state .led { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  .state-running { color:var(--green); } .state-running .led { background:var(--green); }
+  .state-stopped { color:var(--dim); } .state-stopped .led { background:var(--dim); }
+  .state-error { color:var(--red); } .state-error .led { background:var(--red); }
+
+  /* aligned control bars */
+  .bar { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
+  .bar + .bar { margin-top:12px; }
+  .f { display:flex; flex-direction:column; gap:5px; }
+  .f > label { font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--dim); white-space:nowrap; }
+  .f.grow { flex:1; min-width:240px; }
+  input, select, button.ctl {
+    height:var(--ctl); font-family:var(--mono); font-size:12px; background:var(--panel2);
+    color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:0 11px;
+  }
+  select.ctl { padding-right:8px; }
+  #backfillBlocks { width:84px; }
+  button.ctl { cursor:pointer; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+  button.ctl:disabled { opacity:0.4; cursor:default; }
+  button.primary { background:var(--orange); color:#18120f; border-color:var(--orange); font-weight:700; }
+  button.ghost { background:transparent; }
+
+  .help { color:var(--dim); font-size:10.5px; margin-top:10px; line-height:1.5; }
+  .help code { color:var(--blue); }
+  .samples { display:flex; gap:6px; margin-top:10px; align-items:center; flex-wrap:wrap; }
+  .samples > span { color:var(--dim); }
+  .chip { background:transparent; border:1px solid var(--line); color:var(--blue); border-radius:999px; padding:5px 11px; font-size:11px; cursor:pointer; }
+
+  /* metrics */
+  .metrics { display:grid; grid-template-columns:repeat(6, 1fr); border-bottom:1px solid var(--line); background:var(--panel2); }
+  .metric { padding:9px 16px; border-right:1px solid var(--line); cursor:help; }
+  .metric:last-child { border-right:none; }
+  .metric .k { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:0.05em; }
+  .metric .v { font-size:16px; margin-top:2px; }
+  .lag-ok { color:var(--green); } .lag-warn { color:var(--yellow); } .lag-bad { color:var(--red); }
+
+  .banner { display:none; padding:8px 18px; background:#3a2a17; color:var(--yellow); border-bottom:1px solid var(--line); font-size:12px; }
+  .banner.show { display:block; }
+  .writing { display:none; align-items:center; gap:11px; padding:8px 18px; background:#241a12; border-bottom:1px solid var(--line); color:var(--orange); font-size:12px; }
+  .writing.show { display:flex; }
+  .writing.idle { background:#181a20; color:var(--dim); }
+  .writing.idle .amark { animation-duration:2.4s; }
+  .writing .amark { width:18px; height:auto; flex:none; animation:pulse 1s ease-in-out infinite; }
+  .writing .bar2 { flex:1; max-width:240px; height:5px; background:#2a2e3a; border-radius:3px; overflow:hidden; }
+  .writing .bar2 > i { display:block; height:100%; width:0; background:var(--orange); transition:width .3s; }
+  @keyframes pulse { 0%,100% { opacity:.3; transform:scale(.9);} 50% { opacity:1; transform:scale(1.05);} }
+
+  /* panels */
+  main { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); height:calc(100vh - 232px); }
+  .col { background:var(--bg); display:flex; flex-direction:column; min-width:0; }
+  .col .head { padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .col h2 { font-size:12px; margin:0; color:var(--ink); text-transform:uppercase; letter-spacing:0.06em; display:flex; justify-content:space-between; align-items:center; }
+  .col h2 .count { color:var(--orange); font-size:13px; }
+  .col .sub { color:var(--dim); font-size:10.5px; margin-top:4px; line-height:1.5; }
+  .feed { overflow-y:auto; flex:1; }
+
+  /* tidy rows: aligned columns */
+  .rowi { display:grid; align-items:center; gap:10px; padding:7px 14px; border-bottom:1px solid var(--line); animation:fade .4s; }
+  .feed.src .rowi { grid-template-columns:92px 78px 1fr; }
+  .feed.ark .rowi { grid-template-columns:92px 64px 1fr auto auto; }
+  @keyframes fade { from { background:#232732; } to { background:transparent; } }
+  .blk { color:var(--dim); }
+  .ev { color:var(--blue); }
+  .args { color:var(--ink); opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge { font-size:10px; padding:2px 0; border-radius:999px; font-weight:700; text-align:center; }
+  .b-create { background:#173a26; color:var(--green); } .b-update { background:#3a3417; color:var(--yellow); } .b-skip { background:#25262e; color:var(--dim); }
+  a.lnk { color:var(--orange); text-decoration:none; font-size:11px; white-space:nowrap; } a.lnk:hover { text-decoration:underline; }
+  .empty { color:var(--dim); padding:18px 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="topline">
+    <h1>Arkiv <b>Sync</b> — live demo</h1>
+    <span class="state state-stopped" id="state"><span class="led"></span>idle</span>
+  </div>
+
+  <div class="bar">
+    <div class="f">
+      <label>0 · Chain (source)</label>
+      <select id="chain" class="ctl"><option value="sepolia">Sepolia</option></select>
+    </div>
+    <div class="f grow">
+      <label>1 · Contrato</label>
+      <input id="contract" class="ctl" placeholder="0x… dirección del contrato" />
+    </div>
+    <div class="f">
+      <label>&nbsp;</label>
+      <button id="loadAbi" class="ctl ghost">🔎 Cargar eventos</button>
+    </div>
+    <div class="f grow">
+      <label>2 · Evento (de la ABI)</label>
+      <select id="eventSelect" class="ctl"><option value="">— cargá el contrato primero —</option></select>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div class="f grow">
+      <label>Firma del evento — editable, debe matchear EXACTO al contrato</label>
+      <input id="event" class="ctl" value="Transfer(address indexed from, address indexed to, uint256 value)" />
+    </div>
+    <div class="f">
+      <label>3 · Modo</label>
+      <select id="mode" class="ctl">
+        <option value="live">live — eventos nuevos</option>
+        <option value="backfill">backfill — últimos N bloques</option>
+      </select>
+    </div>
+    <div class="f">
+      <label title="Cuántos bloques hacia atrás leer de una (máx 600 en el demo hosteado). Subilo para estresar el worker.">Backfill (#)</label>
+      <input id="backfillBlocks" class="ctl" type="number" value="300" />
+    </div>
+    <div class="f">
+      <label>&nbsp;</label>
+      <button id="start" class="ctl primary">▶ Start</button>
+    </div>
+    <div class="f">
+      <label>&nbsp;</label>
+      <button id="stop" class="ctl ghost" disabled>■ Stop</button>
+    </div>
+    <div class="f">
+      <label>&nbsp;</label>
+      <button id="queryBtn" class="ctl ghost" title="Consulta read-only las entities ya escritas para este contrato (no firma nada, no gasta) — muestra el verbo titular: consultar.">▣ Consultar lo escrito</button>
+    </div>
+  </div>
+
+  <div class="samples" id="samples"><span>muestras (Transfer ERC-20):</span></div>
+  <div class="help">
+    Elegí <b>chain</b> (mainnets son <b>read-only</b>: leer no firma nada; lo escrito va siempre a Arkiv/Braga testnet) →
+    pegá un contrato → <b>Cargar eventos</b> lee su ABI (Sourcify, multichain) → la firma debe matchear exacto (incl. <code>indexed</code>).
+    <b>backfill</b> floodea los últimos N bloques para ver el worker bajo carga.
+  </div>
+</header>
+
+<div class="metrics">
+  <div class="metric" title="Último bloque de la chain fuente.">
+    <div class="k">head</div><div class="v" id="m-head">—</div></div>
+  <div class="metric" title="head − confirmaciones (2). El worker solo indexa hasta acá: bloques ya 'firmes' (anti-reorg).">
+    <div class="k">safe head</div><div class="v" id="m-safe">—</div></div>
+  <div class="metric" title="Bloques que el worker va atrás del safe head. 0 = al día. Sube si Arkiv escribe más lento que la emisión.">
+    <div class="k">lag (bloques)</div><div class="v lag-ok" id="m-lag">—</div></div>
+  <div class="metric" title="Eventos detectados en el contrato (panel izquierdo).">
+    <div class="k">eventos leídos</div><div class="v" id="m-events">0</div></div>
+  <div class="metric" title="Entities create/update en Arkiv (panel derecho). 'skip' = ya estaba, no se reescribe.">
+    <div class="k">entities escritas</div><div class="v" id="m-written">0</div></div>
+  <div class="metric" title="Ritmo de escritura a Arkiv (últimos 5s). Techo ~25/s con 1 wallet.">
+    <div class="k">writes/seg</div><div class="v" id="m-rate">0.0</div></div>
+</div>
+
+<div class="banner" id="banner"></div>
+<div class="writing" id="writing">
+  <svg class="amark" viewBox="0 0 388 218" xmlns="http://www.w3.org/2000/svg"><path d="M0 218V0H49.1603V32.9884H32.6204V185.012H49.1603V218H0Z" fill="#FE7446"/><path d="M230.877 181.09L219.62 146.256H168.622L157.136 181.09H122.219V168.171L175.514 19.6085H214.337L267.862 168.171V181.09H230.877ZM194.351 68.9757L179.649 113.037H208.594L194.351 68.9757Z" fill="#FE7446"/><path d="M387.701 0V218H338.54V185.012H355.08V32.9884H338.54V0H387.701Z" fill="#FE7446"/></svg>
+  <span id="writing-text">Escribiendo en Arkiv…</span>
+  <span class="bar2"><i id="writing-bar"></i></span>
+</div>
+
+<main>
+  <section class="col">
+    <div class="head">
+      <h2><span>① Worker · Sepolia source</span><span class="count" id="src-count">0</span></h2>
+      <div class="sub">Lo que el worker LEE del contrato. Columnas: bloque · evento · args.</div>
+    </div>
+    <div class="feed src" id="src"><div class="empty">Pegá un contrato, cargá eventos, elegí uno y dale Start.</div></div>
+  </section>
+  <section class="col">
+    <div class="head">
+      <h2><span>② Writing in Arkiv · Braga</span><span class="count" id="ark-count">0</span></h2>
+      <div class="sub"><b style="color:var(--green)">create</b>=nueva · <b style="color:var(--yellow)">update</b>=cambió · <b style="color:var(--dim)">skip</b>=ya existía. <b style="color:var(--orange)">🔍 ver</b>=la entidad en el Data Explorer · <b style="color:var(--orange)">⛓ tx</b>=la tx on-chain.</div>
+    </div>
+    <div class="feed ark" id="ark"><div class="empty">Acá aparece cada entity escrita en Arkiv, con link para re-chequearla.</div></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const BLOCK_EXPLORER = 'https://explorer.braga.hoodi.arkiv.network'
+const DATA_EXPLORER = 'https://data.arkiv.network'
+// Link by eventId (always present) — batched writes don't return per-entity keys.
+const entityUrl = (eventId) => `${DATA_EXPLORER}/?q=${encodeURIComponent(`eventId = "${eventId}"`)}`
+let events = 0, written = 0, srcRows = 0, arkRows = 0, writeTimes = [], writingTarget = 0, writingDone = 0, skips = 0, isRunning = false
+
+const short = (s, n=8) => s && s.length > n+4 ? s.slice(0,n)+'…'+s.slice(-4) : (s || '')
+const cap = (feed, max=250) => { while (feed.children.length > max) feed.removeChild(feed.lastChild) }
+const clearEmpty = (feed) => { const e = feed.querySelector('.empty'); if (e) e.remove() }
+
+async function loadEvents() {
+  const addr = $('contract').value.trim()
+  const sel = $('eventSelect')
+  if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) { sel.innerHTML = '<option value="">dirección inválida</option>'; return }
+  sel.innerHTML = '<option value="">cargando ABI…</option>'
+  try {
+    const r = await fetch('/api/abi?address=' + addr + '&chain=' + encodeURIComponent($('chain').value))
+    const j = await r.json()
+    if (!j.ok || !j.events.length) throw new Error('sin eventos')
+    sel.innerHTML = `<option value="">— ${j.events.length} eventos — elegí uno —</option>`
+    for (const ev of j.events) {
+      const o = document.createElement('option')
+      o.value = ev.signature
+      o.textContent = `${ev.source === 'abi' ? '◆' : '○'} ${ev.label}`
+      o.title = ev.signature
+      sel.appendChild(o)
+    }
+  } catch {
+    sel.innerHTML = '<option value="">ABI no verificada — editá la firma a mano</option>'
+  }
+}
+
+function onSource(a) {
+  const feed = $('src'); clearEmpty(feed)
+  for (const e of a.events) { // a.events is a display sample (capped); a.count is the true total
+    const row = document.createElement('div'); row.className = 'rowi'
+    const args = Object.entries(e.args).map(([k,v]) => `${k}=${short(String(v),10)}`).join(' · ')
+    row.innerHTML = `<span class="blk">#${e.block}</span><span class="ev">${e.event}</span><span class="args" title="${args.replace(/"/g,'&quot;')}">${args}</span>`
+    feed.insertBefore(row, feed.firstChild)
+  }
+  events += a.count // TRUE count of events read (not the capped display sample)
+  cap(feed); $('src-count').textContent = events; $('m-events').textContent = events
+}
+
+function onWrite(a) {
+  const feed = $('ark'); clearEmpty(feed)
+  const row = document.createElement('div'); row.className = 'rowi'
+  const badge = `<span class="badge b-${a.op}">${a.op}</span>`
+  const id = short(a.eventId, 14)
+  const verify = `<a class="lnk" href="${entityUrl(a.eventId)}" target="_blank" title="Ver esta entidad guardada en el Arkiv Data Explorer">🔍 ver</a>`
+  const tx = a.txHash ? `<a class="lnk" href="${BLOCK_EXPLORER}/tx/${a.txHash}" target="_blank" title="La transacción on-chain que la escribió">⛓ tx</a>` : `<span></span>`
+  row.innerHTML = `<span class="blk">#${a.block}</span>${badge}<span class="args" title="${a.eventId}">${id}</span>${verify}${tx}`
+  feed.insertBefore(row, feed.firstChild); arkRows++
+  if (a.op !== 'skip') { written++; writeTimes.push(Date.now()) } else { skips++ }
+  if (writingTarget > 0) { writingDone++; updateWriting() }
+  cap(feed)
+  $('ark-count').textContent = arkRows // badge matches the rows shown (creates+updates+skips)
+  $('m-written').textContent = skips > 0 ? `${written} · ${skips} skip` : `${written}`
+}
+
+function showStatus(text, pct, idle) {
+  $('writing').className = 'writing show' + (idle ? ' idle' : '')
+  $('writing-text').textContent = text
+  $('writing-bar').style.width = (pct ?? 0) + '%'
+  $('writing-bar').parentElement.style.display = idle ? 'none' : ''
+}
+function onWriting(a) { writingTarget = a.count; writingDone = 0; updateWriting() }
+function updateWriting() {
+  const pct = writingTarget ? Math.min(100, Math.round((writingDone / writingTarget) * 100)) : 0
+  showStatus(`Escribiendo en Arkiv… ${writingDone}/${writingTarget} (firmando tx · techo ~25/s con 1 wallet)`, pct, false)
+}
+function goIdle(lagBlocks) {
+  writingTarget = 0
+  if (!isRunning) { $('writing').className = 'writing'; return } // stopped → hide
+  const caught = !lagBlocks || Number(lagBlocks) === 0
+  const skipNote = skips > 0 ? ` · ${skips} ya existían (skip)` : ''
+  // Don't vanish between blocks — stay visible in a subtle idle state so it never looks frozen.
+  showStatus(caught ? `Al día · esperando el próximo bloque…${skipNote}` : `Procesando el próximo lote…${skipNote}`, 0, true)
+}
+
+function onTick(a) {
+  // this tick's writes are done: let the bar visibly hit 100%, then drop to a subtle idle state.
+  if (writingTarget > 0) showStatus(`Escribiendo en Arkiv… ${writingTarget}/${writingTarget} ✓`, 100, false)
+  setTimeout(() => goIdle(a.lagBlocks), 500)
+  $('m-head').textContent = a.head; $('m-safe').textContent = a.safeHead
+  const lag = Number(a.lagBlocks); const el = $('m-lag'); el.textContent = a.lagBlocks
+  el.className = 'v ' + (lag === 0 ? 'lag-ok' : lag < 50 ? 'lag-warn' : 'lag-bad')
+  const banner = $('banner')
+  if (lag > 50) { banner.className = 'banner show'; banner.textContent = `⚠ El worker va ${lag} bloques atrás — Arkiv escribe más lento que la emisión (techo ~25 ev/seg con 1 wallet). No se pierde nada: recupera cuando baje el ritmo.` }
+  else banner.className = 'banner'
+}
+
+// 10s rolling window so the rate isn't jumpy between batched txs (writes land in groups of ~50).
+setInterval(() => { const now = Date.now(); writeTimes = writeTimes.filter(t => now - t < 10000); $('m-rate').textContent = (writeTimes.length / 10).toFixed(1) }, 1000)
+
+function setState(s) {
+  const el = $('state'); el.className = 'state state-' + (s === 'running' ? 'running' : s === 'error' ? 'error' : 'stopped')
+  el.innerHTML = '<span class="led"></span>' + s
+  $('start').disabled = (s === 'running'); $('stop').disabled = (s !== 'running')
+}
+
+// Bounded model: each Start opens a fresh EventSource to /api/run (one time-boxed pass), and we
+// close it on the terminal control event so it never auto-reconnects (which would re-trigger a run).
+let es = null
+function closeStream() { if (es) { es.close(); es = null } }
+function showError(msg) { setState('error'); $('banner').className = 'banner show'; $('banner').textContent = '✗ ' + msg }
+function dispatch(a) {
+  if (a.kind === 'source') onSource(a)
+  else if (a.kind === 'writing') onWriting(a)
+  else if (a.kind === 'write') onWrite(a)
+  else if (a.kind === 'tick') onTick(a)
+  else if (a.kind === 'control') {
+    if (a.state === 'running') { isRunning = true; setState('running') }
+    else if (a.state === 'stopped') {
+      isRunning = false; setState('stopped'); $('writing').className = 'writing'; closeStream()
+      if (a.reason === 'budget' || a.reason === 'cap') {
+        $('banner').className = 'banner show'
+        $('banner').textContent = a.reason === 'budget'
+          ? `⏱ Corrida acotada terminada (~45s, límite del demo serverless) · ${a.written} escritas. Dale ▶ Start otra vez para seguir, o ▣ Consultar lo escrito.`
+          : `✓ Tope de ${a.written} entities del demo alcanzado. Dale ▶ Start otra vez, o ▣ Consultar lo escrito.`
+      }
+    }
+    else if (a.state === 'error') { isRunning = false; setState('error'); $('writing').className = 'writing'; closeStream(); showError(a.message) }
+  }
+}
+
+const ERC20_TRANSFER = 'Transfer(address indexed from, address indexed to, uint256 value)'
+// Per-chain sample contracts (all standard ERC-20 Transfer).
+const SAMPLES = {
+  ethereum: [['USDC', '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'], ['WETH', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2']],
+  sepolia: [['USDC', '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'], ['WETH', '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14']],
+  base: [['USDC', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'], ['WETH', '0x4200000000000000000000000000000000000006']],
+  'base-sepolia': [['WETH', '0x4200000000000000000000000000000000000006']],
+  bsc: [['USDT', '0x55d398326f99059fF775485246999027B3197955'], ['WBNB', '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c']],
+  'bsc-testnet': [['WBNB', '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd']],
+}
+function renderSamples() {
+  const chain = $('chain').value
+  const box = $('samples')
+  box.innerHTML = '<span>muestras (Transfer ERC-20):</span>'
+  for (const [name, addr] of SAMPLES[chain] ?? []) {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = name
+    b.onclick = () => { $('contract').value = addr; $('event').value = ERC20_TRANSFER; loadEvents() }
+    box.appendChild(b)
+  }
+}
+async function loadChains() {
+  try {
+    const r = await fetch('/api/chains'); const j = await r.json()
+    if (j.ok) {
+      const sel = $('chain'); sel.innerHTML = ''
+      for (const c of j.chains) {
+        const o = document.createElement('option'); o.value = c.key
+        o.textContent = `${c.label}${c.isMainnet ? ' · mainnet' : ' · testnet'}`
+        sel.appendChild(o)
+      }
+      sel.value = 'sepolia'
+    }
+  } catch { /* keep default */ }
+  renderSamples()
+}
+loadChains()
+
+$('chain').onchange = () => {
+  $('eventSelect').innerHTML = '<option value="">— cargá el contrato primero —</option>'
+  renderSamples()
+}
+$('loadAbi').onclick = loadEvents
+$('contract').addEventListener('blur', () => { if ($('contract').value.trim()) loadEvents() })
+$('eventSelect').onchange = (e) => { if (e.target.value) $('event').value = e.target.value }
+
+function resetCounters() {
+  events = written = srcRows = arkRows = skips = 0; writeTimes = []; writingTarget = 0; writingDone = 0
+  $('src').innerHTML = ''; $('ark').innerHTML = ''
+  $('m-events').textContent = '0'; $('m-written').textContent = '0'; $('m-head').textContent = '—'; $('m-safe').textContent = '—'
+  $('m-lag').textContent = '—'; $('m-rate').textContent = '0.0'; $('src-count').textContent = '0'; $('ark-count').textContent = '0'
+  $('banner').className = 'banner'; $('writing').className = 'writing'
+}
+$('start').onclick = () => {
+  const contract = $('contract').value.trim(), event = $('event').value.trim()
+  if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) return showError('Dirección de contrato inválida.')
+  if (!event) return showError('Falta la firma del evento.')
+  resetCounters(); isRunning = true; setState('running')
+  const qs = new URLSearchParams({ chain: $('chain').value, contract, event, mode: $('mode').value, backfillBlocks: $('backfillBlocks').value })
+  closeStream()
+  es = new EventSource('/api/run?' + qs.toString())
+  es.onmessage = (m) => { try { dispatch(JSON.parse(m.data)) } catch {} }
+  es.onerror = () => { closeStream(); if (isRunning) { isRunning = false; setState('stopped'); $('writing').className = 'writing' } }
+}
+$('stop').onclick = () => { closeStream(); isRunning = false; setState('stopped'); $('writing').className = 'writing' }
+$('queryBtn').onclick = async () => {
+  const contract = $('contract').value.trim()
+  if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) return showError('Pegá un contrato válido para consultar.')
+  const feed = $('ark'); feed.innerHTML = '<div class="empty">Consultando la base de datos Arkiv…</div>'
+  try {
+    const r = await fetch('/api/query?contract=' + contract + '&chain=' + encodeURIComponent($('chain').value))
+    const j = await r.json()
+    if (!j.ok) throw new Error(j.error)
+    feed.innerHTML = ''; arkRows = j.count; $('ark-count').textContent = j.count
+    if (!j.count) { feed.innerHTML = '<div class="empty">0 entities para este contrato todavía — indexá con ▶ Start y reconsultá.</div>'; return }
+    for (const row of j.rows) {
+      const div = document.createElement('div'); div.className = 'rowi'
+      const blk = (row.attributes && row.attributes.block) ?? '—', ev = (row.attributes && row.attributes.event) || ''
+      const verify = `<a class="lnk" href="${DATA_EXPLORER}/?q=${encodeURIComponent('$key = "' + row.key + '"')}" target="_blank" title="Ver esta entidad en el Data Explorer">🔍 ver</a>`
+      div.innerHTML = `<span class="blk">#${blk}</span><span class="badge b-update">query</span><span class="args" title="${row.key}">${ev} · ${short(row.key, 14)}</span>${verify}<span></span>`
+      feed.appendChild(div)
+    }
+  } catch (e) { feed.innerHTML = '<div class="empty">Error consultando: ' + (e.message || e) + '</div>' }
+}
+</script>
+</body>
+</html>
