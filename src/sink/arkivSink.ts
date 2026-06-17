@@ -290,6 +290,11 @@ export class ArkivSink implements Sink {
     return { contentHash, attributes, payload, contentType, expiresIn }
   }
 
+  /**
+   * Single-record write (create-or-skip-or-update). This is the FALLBACK path — the indexer hot path
+   * calls writeBatch(), which packs many records into one `mutateEntities` tx (up to 1000 ops). Never
+   * loop write() over a set you already have: that is one signed tx + one nonce round-trip PER record.
+   */
   async write(record: SinkRecord, onWritten?: WriteProgress): Promise<WriteResult> {
     const { contentHash, attributes, payload, contentType, expiresIn } = this.prepare(record)
     return this.runExclusive(async () => {
@@ -314,7 +319,9 @@ export class ArkivSink implements Sink {
     })
   }
 
-  /** Batched upsert — one transaction per BATCH_SIZE records. Atomic + dedup-safe. */
+  /** Batched upsert — the HOT PATH. One `mutateEntities` transaction per chunk of `batchSize` records
+   *  (default 50, clamped to Arkiv's 1000-ops-per-tx cap). Atomic + dedup-safe; the ONLY Arkiv write
+   *  path for 2+ records — one nonce per chunk, never one signed tx per record. */
   async writeBatch(records: SinkRecord[], onWritten?: WriteProgress): Promise<WriteResult[]> {
     if (records.length === 0) return []
 
