@@ -3,7 +3,7 @@ import { base, baseSepolia, bsc, bscTestnet, mainnet, sepolia } from 'viem/chain
 
 /**
  * Source chain registry. The SOURCE is READ-ONLY (getLogs) — reading mainnet logs signs nothing and
- * spends nothing, so indexing mainnet events is safe. The SINK (Arkiv/Braga) is always a testnet and
+ * spends nothing, so indexing mainnet events is safe. The SINK (Arkiv/the configured Arkiv network) is always a testnet and
  * is the only thing that holds a key. Adding a chain is just an entry here (or a custom def in config);
  * the core indexer never changes.
  *

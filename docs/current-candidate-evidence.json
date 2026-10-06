@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "name": "arkiv-sync",
+    "version": "0.3.0",
+    "publicEntry": "dist/index.js",
+    "publicEntrySha256": "180b2346b53d95c5f3e7a363b4e15be627a9d1fabb6375ec8d9b546d1028f90a",
+    "publicationVerified": false
+  },
+  "testedArchiveSha256": "eef1bbf8bb570fb289bb211599adb7fffc5f3c1329b3a45a3e62e9f1bd84332b",
+  "actualReportSha256": "9d2071bbe46014b39122eff732f6bc731ca966d3da636658f8b5932446005c1a",
+  "network": {
+    "name": "Tiramisu",
+    "chainId": 7738577
+  },
+  "testedCombination": {
+    "sdk": "0.8.1",
+    "viem": "2.57.3"
+  },
+  "execution": {
+    "startedAtUTC": "2026-10-06T21:03:46.941Z",
+    "completedAtUTC": "2026-10-06T21:03:57.798Z",
+    "actualNewTransactions": 1,
+    "authenticatedRetainedTransactions": 1,
+    "bulkRecreated": false,
+    "retainedBulkRows": 3,
+    "derivedRows": 1
+  },
+  "cases": [
+    {
+      "id": "SF01-public-sink-source-engine",
+      "status": "PASS"
+    },
+    {
+      "id": "SF02-pinned-reader-sqlite",
+      "status": "PASS"
+    },
+    {
+      "id": "SF03-auth-api-react-cache",
+      "status": "PASS"
+    }
+  ],
+  "receipts": [
+    {
+      "transactionHash": "0xb71e09fb2c50e166698a0abafd29a772f54739d3f1f19f34983dd261dcf74cca",
+      "blockNumber": "235057",
+      "status": "success",
+      "from": "0x62064c23418f0a7798cf5a432fb42655bd0f5095",
+      "to": "0x4400000000000000000000000000000000000044",
+      "gasUsed": "372144",
+      "effectiveGasPrice": "1000000002"
+    },
+    {
+      "transactionHash": "0x38e07049317d76939d4017edec64112a7a220ef34050c54867b45df4047093a1",
+      "blockNumber": "235461",
+      "status": "success",
+      "from": "0x62064c23418f0a7798cf5a432fb42655bd0f5095",
+      "to": "0x4400000000000000000000000000000000000044",
+      "gasUsed": "141064",
+      "effectiveGasPrice": "1000000002"
+    }
+  ],
+  "offline": {
+    "admissionCases": 6,
+    "missingSignerProviderAttempts": 0,
+    "totalCases": 52,
+    "scaffoldChecks": 18
+  },
+  "limits": [
+    "The retained three-row batch was created by the earlier packed candidate; its full receipt/input/rows were authenticated before continuation.",
+    "The current compiled entry executed the public source, indexer, derived sink write, pinned reader, persisted SQLite adapter, authenticated API and React consumer.",
+    "Only two factory admission orderings changed; source-map comparison preserves the engine, source, sink and reader inputs.",
+    "SQLite/API/React belong to the separately tested application recipe, not library-provided hosting or production identity.",
+    "Five viewport widths and native200% browser zoom were observed; no public-cloud, arbitrary-contract, natural-reorg or production-RLS certification follows.",
+    "The separate create-arkiv-sync0.3.0 archive was tested locally and remains independently unpublished."
+  ]
+}

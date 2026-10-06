@@ -12,18 +12,19 @@ export const bigintReplacer = (_k: string, v: unknown) => (typeof v === 'bigint'
 
 /** Deterministic JSON (sorted keys) — used to detect whether a record actually changed. */
 export function stableStringify(value: unknown): string {
-  const seen = new WeakSet()
+  const ancestors = new WeakSet()
   const norm = (v: unknown): unknown => {
     if (typeof v === 'bigint') return v.toString()
     if (v && typeof v === 'object') {
-      if (seen.has(v as object)) return undefined
-      seen.add(v as object)
-      if (Array.isArray(v)) return v.map(norm)
-      return Object.fromEntries(
+      if (ancestors.has(v as object)) throw new TypeError('Cannot serialize circular data.')
+      ancestors.add(v as object)
+      const normalized = Array.isArray(v) ? v.map(norm) : Object.fromEntries(
         Object.keys(v as Record<string, unknown>)
           .sort()
           .map((k) => [k, norm((v as Record<string, unknown>)[k])]),
       )
+      ancestors.delete(v as object)
+      return normalized
     }
     return v
   }
@@ -51,9 +52,12 @@ export function addr(value: unknown): string {
  * integer range, so amounts must be stored as strings. THROWS on a non-integer value.
  */
 export function uint(value: unknown): string {
-  if (typeof value === 'bigint') return value.toString()
+  if (typeof value === 'bigint') {
+    if (value < 0n) throw new Error('uint(): value must be nonnegative.')
+    return value.toString()
+  }
   if (typeof value === 'number') {
-    if (!Number.isInteger(value)) throw new Error(`uint(): ${value} is not an integer.`)
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`uint(): ${value} is not an exact nonnegative integer.`)
     return value.toString()
   }
   const s = String(value)

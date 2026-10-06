@@ -104,7 +104,7 @@ export class EvmSource implements SourceAdapter {
   }
 
   async getHeadBlock(): Promise<bigint> {
-    return this.client.getBlockNumber()
+    return this.client.getBlockNumber({ cacheTime: 0 })
   }
 
   async getBlockHeader(blockNumber: bigint): Promise<BlockHeader | null> {
@@ -121,7 +121,7 @@ export class EvmSource implements SourceAdapter {
         // exist → genuine absence (reorg signal, null); if it's above this endpoint's head, it's
         // lag → throw so the caller retries (and the fallback can rotate).
         try {
-          const currentHead = await this.client.getBlockNumber()
+          const currentHead = await this.client.getBlockNumber({ cacheTime: 0 })
           if (blockNumber > currentHead) {
             throw new Error(`getBlockHeader(${blockNumber}): RPC head is ${currentHead} (lagging) — retrying.`)
           }

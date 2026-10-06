@@ -1,6 +1,6 @@
 {
   "name": "create-arkiv-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Scaffold a chain→Arkiv indexer in seconds (npm create arkiv-sync).",
   "type": "module",
   "bin": {
@@ -8,7 +8,9 @@
   },
   "files": [
     "index.mjs",
-    "template"
+    "template",
+    "AGENTS.md",
+    "CLAUDE.md"
   ],
   "license": "MIT",
   "engines": {

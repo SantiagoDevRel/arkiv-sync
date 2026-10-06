@@ -1,0 +1,356 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "name": "arkiv-sync",
+    "version": "0.3.0",
+    "publicEntry": "dist/index.js",
+    "publicEntrySha256": "28ad76733d2cd7d801e848695dedd687a6f7077248f756b84ff0322219bf2299",
+    "publicationStatus": "Local packed candidate; npm publication not verified by this evidence"
+  },
+  "sourceReportSha256": "e1d9160baac3426c36f3005c45420d49c4859aebcd37dee6e8e307b5dd29ab77",
+  "executedSuiteCodeSha256": "50a3d11d15c4644693c03fafb807872a2c6a5583a496bd1f88fde4a7e7a82d68",
+  "execution": {
+    "startedAtUTC": "2026-10-06T13:35:32.338Z",
+    "completedAtUTC": "2026-10-06T13:37:27.043Z",
+    "kind": "Actual funded sink/indexer suite with separately labeled controlled faults"
+  },
+  "network": {
+    "name": "Tiramisu",
+    "chainId": 7738577,
+    "publicRPC": "https://rpc.tiramisu.db-chain.testnet.arkiv.network",
+    "nativeEntityContract": "0x4400000000000000000000000000000000000044"
+  },
+  "testedCombination": {
+    "sdkVersion": "0.8.1",
+    "sdkPublicEntrySha256": "74a12e58c441192c0e3fae2242b9746ad28688014e5584a3e0b0168cb107eefd",
+    "viemVersion": "2.57.3",
+    "testedArchiveSha256": "924b7352502499edfa13798b7e7a5203850cad792be16f99884c4ac62fdcc960"
+  },
+  "sharedSuite": {
+    "passedCases": 8,
+    "totalCases": 8,
+    "confirmedTransactions": 22,
+    "transactionScope": "The eight sink/indexer cases account for22 distinct confirmed transactions; the HTTP event-source supplement adds zero transactions"
+  },
+  "cases": [
+    {
+      "id": "sync-bulk-pages",
+      "status": "passed",
+      "sourceCaseSha256": "50357d59e57bac2b98ae1337a98672ad24b1f060aab1595620196577714f21bc",
+      "confirmedTransactions": 11,
+      "scope": "201 actual candidate sink rows,20records/batch, complete pinned reader pagination and exact large-integer client sort.",
+      "receipts": [
+        {
+          "transactionHash": "0xd1f300c0f8257a7467f8e79eb37e9bf07e03906a645b9f0ffdc4009e4151efa4",
+          "status": "success",
+          "blockHash": "0x327409991de15782a5d596fe1035ca3070ac3a25b934877d638e4d475e2ff028",
+          "blockNumber": "222012",
+          "gasUsed": "2537280",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x71a2ff38a87d1a6951a3ea8c05609ce12cd6f4994a522f41614cf3fb0edb1296",
+          "status": "success",
+          "blockHash": "0xfec10b35d23e040a4b611a3b5fb3c1d04619edbdb06d76e23cf3016d7d2b0978",
+          "blockNumber": "222014",
+          "gasUsed": "2537440",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x92f8666b74ba5ecf9e91b2585136834a54ab17504da74284feb0b3cbf087d549",
+          "status": "success",
+          "blockHash": "0x9a37713d41715837830217dc8601eaebc97801fc77f1332e3528d89291cf2a21",
+          "blockNumber": "222017",
+          "gasUsed": "2537440",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0xd2078f46fdd7c1b4d7a6229bed77f37d5dd9cd7e3c0e477493eae4dfb011fb2d",
+          "status": "success",
+          "blockHash": "0x928576252ff8538c4e81f338f5f22fc88eba99a1152fe4e440fc489d1ea99d47",
+          "blockNumber": "222019",
+          "gasUsed": "2537440",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0xd3e16093300b43544108967956d14697b7447293dea6148de8e26124037ba6cd",
+          "status": "success",
+          "blockHash": "0xe4caec678d2611d75dc46dd63ba6b8b318973c246548587bfb2a1177b6b576e6",
+          "blockNumber": "222022",
+          "gasUsed": "2537440",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0xcaa8f9beb47cf4e487b6554053ea68d550074ab6a3ece582b8c113fca3d7e256",
+          "status": "success",
+          "blockHash": "0x5273b4819b1f27e1b2b043e131b92d8321de79571c7195ef5f29b4052b93f874",
+          "blockNumber": "222024",
+          "gasUsed": "2537760",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0xfc7d531687377c44b86ea222ee61ed8123f8ea0a6c10204a9bac8d78b19dbcda",
+          "status": "success",
+          "blockHash": "0x52014cb8b013e4db6936c846414754a65e09e26257b90ef6c8020489cf4d9243",
+          "blockNumber": "222026",
+          "gasUsed": "2537760",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x2f4962725174a73f85a9990a90d5779c426c56cbf3e3895b841942fd33fce807",
+          "status": "success",
+          "blockHash": "0x81e88b216a1f5bfd9d4ad4f5b8337199d1517bbe9f5df9b9e571dc7d2a8a2e61",
+          "blockNumber": "222029",
+          "gasUsed": "2537760",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x0cd33633e600d6163077dc1b5ab68fdea3cebd388910e26c085454f9405d6828",
+          "status": "success",
+          "blockHash": "0xc4a97c32139206b41424e1d4a1ce9dfbfc32c97321f7f9f612da0c7ba6a7e762",
+          "blockNumber": "222031",
+          "gasUsed": "2537760",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x6999528887e36ec892ebf85e199ad3ef709938ab139244389d9fae048254eca4",
+          "status": "success",
+          "blockHash": "0x5d4546e4d69656671374a6e495ed88833b23621169a993ef0eb199b1f3d3851d",
+          "blockNumber": "222034",
+          "gasUsed": "2537760",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0xffd7895a4526e428f95050cae48e9fbba82d3e330230c9610f2d81fa9f04e638",
+          "status": "success",
+          "blockHash": "0x3ccab0ec2d97d237a5ba9e82b93bdb0de490938291d6bb6aff7eebe106cfacc3",
+          "blockNumber": "222036",
+          "gasUsed": "126888",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        }
+      ],
+      "fixture": {
+        "synthetic": true,
+        "inputSha256": "ca8c5db3ac4e473260e43a4f83ea28269fc373ff185aafcf7a86feeb896208cd",
+        "readSnapshotBlock": "222037",
+        "rows": 201,
+        "pageEntityCounts": [
+          100,
+          100,
+          1
+        ],
+        "exactLargeIntegerSort": true
+      }
+    },
+    {
+      "id": "sync-change-dedup",
+      "status": "passed",
+      "sourceCaseSha256": "247a1f4c35620798ad2c4a73a472789751f55cee7ae1317d88269f995f50007e",
+      "confirmedTransactions": 3,
+      "scope": "Duplicate last-wins, repeat skip, patch full replacement/unset preserving expiration, explicit atomic extension.",
+      "receipts": [
+        {
+          "transactionHash": "0xbdfa7192b0e3a7cf51b7046ff442ef84ed06f226e019fa6219d7a0cf2791cee2",
+          "status": "success",
+          "blockHash": "0x6be39a8d20304544d07c2ccab539668789b4dd081871a2c9a133c01dfa137412",
+          "blockNumber": "222040",
+          "gasUsed": "125800",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x402af0212d8f4a382d25f2acfeec2000c27d94c92f6e9f03ee7d1a3134eddb2a",
+          "status": "success",
+          "blockHash": "0xa5b6efd57d088de21132a7a2aa785858ff0768c8effbad2bad4dfb31fad9ba83",
+          "blockNumber": "222042",
+          "gasUsed": "99304",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x6587699ff007f255adfb9ad10a34452b97c38887abcfb3f9b6bcb1730c9f30dc",
+          "status": "success",
+          "blockHash": "0x2f9a29a98afc59e519caba4518acab8a12ae2e65de000e128f14cf3a60c4a301",
+          "blockNumber": "222045",
+          "gasUsed": "104304",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        }
+      ]
+    },
+    {
+      "id": "sync-query-bounds",
+      "status": "passed",
+      "sourceCaseSha256": "d3682e79c157b8b207fb8f91bcec1eb7bf1a9ba6eb00badd213d9c3f186966ff",
+      "confirmedTransactions": 0,
+      "scope": "Reader local guards, complete-result bound and sink full-scan bound fail before any deletion.",
+      "receipts": [],
+      "negativeCaseCount": 8
+    },
+    {
+      "id": "sync-owner-reconcile",
+      "status": "passed",
+      "sourceCaseSha256": "dd21e0bea85a7f13bd3708ca5d5676b717b897b2eaaf0e90863d1fd0935835e4",
+      "confirmedTransactions": 4,
+      "scope": "Own/foreign-owner and sync-label isolation; delete only task-created row, scoped range reconciliation removes two own stale rows.",
+      "receipts": [
+        {
+          "transactionHash": "0x63ba2cc3adbba4abe0845553551e8dac030befc4a4a4d6c85d5f1997944bfc76",
+          "status": "success",
+          "blockHash": "0xdd04508abb1c24724bfb045b2689b92bd46e121bae9d633bbbbf9e9f743ab028",
+          "blockNumber": "222048",
+          "gasUsed": "96056",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x95ed500bc394bdd9d4e93fd05e2514c8f20d10dc6e83c7865c5de40dd07c3dc9",
+          "status": "success",
+          "blockHash": "0x15c94eef97de0d51dc781d47a0a52055281b7577d82b96dea24dc11af5953d77",
+          "blockNumber": "222050",
+          "gasUsed": "126856",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x6bd73f5c43198d40b524523a725e1929a1c50480d7c4e6193afb5cb80e6c32de",
+          "status": "success",
+          "blockHash": "0x9dc6f8ee438d8cf0df870e1177e492f74fbeb1a2f7d4974f21d8bae3310101f4",
+          "blockNumber": "222053",
+          "gasUsed": "24510",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        },
+        {
+          "transactionHash": "0x2627315802ff679d88c50c166b767c01aa1fedb5c1b9c31e697a5e94a84454f1",
+          "status": "success",
+          "blockHash": "0x3aeb7d73b5a4735d9bcb6443c1611a675621b26bf4be19f779371310c4cd56b7",
+          "blockNumber": "222055",
+          "gasUsed": "27190",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        }
+      ]
+    },
+    {
+      "id": "sync-confirmed-stop",
+      "status": "passed",
+      "sourceCaseSha256": "2a7b9d1a28f92e5a040f9ff64b3babba93e1d6d93d56946ee80a945871756d66",
+      "confirmedTransactions": 1,
+      "scope": "Real write followed by synchronous progress callback failure; preserve confirmed hash and block later admissions with zero automatic resend.",
+      "receipts": [
+        {
+          "transactionHash": "0xf3b5fc074a34c564338c549b1b174f42e5ea1004e33f89f3576d9e82f80d81cb",
+          "status": "success",
+          "blockHash": "0xce49aa0b27aee75c037d19004111b8265fdfe54b5739eee7f5554d86e7b751c3",
+          "blockNumber": "222058",
+          "gasUsed": "126856",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        }
+      ],
+      "automaticResends": 0
+    },
+    {
+      "id": "sync-source-checkpoint",
+      "status": "passed",
+      "sourceCaseSha256": "30bd257629143bf74e1babdd5f61374ad0a258034a15ff52e6b381ec4e078ad5",
+      "confirmedTransactions": 1,
+      "scope": "Indexer maps two actual bounded native EntityCreated logs to derived rows and durable file cursor; restart/replay skip.",
+      "receipts": [
+        {
+          "transactionHash": "0xf10419feff50ff360d296e026188d74532b46f9381248d623c15e4b10015b143",
+          "status": "success",
+          "blockHash": "0x7907e4c5d1dbaa5c93770fe3b57eebab20e6f3cf4e802ab8bacad2102d5e2921",
+          "blockNumber": "222061",
+          "gasUsed": "262224",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        }
+      ],
+      "replayAdditionalTransactions": 0
+    },
+    {
+      "id": "sync-controlled-reorg",
+      "status": "passed",
+      "sourceCaseSha256": "c00842c4fd6c48b34dfc0e2b29b413818bc15cb94ba9bd7450624761710e38a7",
+      "confirmedTransactions": 1,
+      "scope": "Injected header mismatch and suppressed last source event reconcile only its own real derived row; no natural reorg claim.",
+      "receipts": [
+        {
+          "transactionHash": "0x4dddc0b161744dc245a66ca336f6785aed1e3a0070b93672cc53d60a153b473f",
+          "status": "success",
+          "blockHash": "0xb14bbcac5b9e221e328f5de21dcfd26b07f2d8131c54bce2ef19065d867ce7db",
+          "blockNumber": "222064",
+          "gasUsed": "24510",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        }
+      ],
+      "classification": "Controlled header mismatch and source-event omission over actual confirmed source logs; not a natural consensus reorganization"
+    },
+    {
+      "id": "sync-checkpoint-recovery",
+      "status": "passed",
+      "sourceCaseSha256": "4951a401de1fa497c9216154f7758409e07b27560469a3ae8d5ed35050a81ee8",
+      "confirmedTransactions": 1,
+      "scope": "Injected cursor-save failure after confirmed derived write; new worker replay skips existing content and commits cursor with zero resend.",
+      "receipts": [
+        {
+          "transactionHash": "0x3ab4d02a097075421b4046988f1655aed2745574464d8274ff691e2132a40578",
+          "status": "success",
+          "blockHash": "0x49043a476e777c0373ea6dbe4206c3498ca04653beb12b7575f6953ecdd61ae2",
+          "blockNumber": "222066",
+          "gasUsed": "262224",
+          "effectiveGasPriceWei": "1000000002",
+          "to": "0x4400000000000000000000000000000000000044"
+        }
+      ],
+      "automaticResends": 0
+    }
+  ],
+  "eventSourceSupplement": {
+    "sourceReportSha256": "6db745f43ee009d4c16a87fde9ab15e917a57d7cafec20cbc02026dd532f08c7",
+    "checkedAtUTC": "2026-10-06T13:47:23.547Z",
+    "status": "passed",
+    "export": "EvmSource",
+    "executionKind": "Actual package HTTP event source through a bounded parent proxy",
+    "newTransactions": 0,
+    "event": "EntityCreated",
+    "blocks": 1,
+    "observedEvents": 22,
+    "matchedTaskEvents": 2,
+    "canonicalHeaderVerified": true,
+    "controlledHeader": false,
+    "forwardedRequests": 6,
+    "requestMethods": [
+      "net_listening",
+      "eth_chainId",
+      "eth_blockNumber",
+      "eth_getBlockByNumber",
+      "eth_getLogs",
+      "eth_blockNumber"
+    ],
+    "readBlock": "222012"
+  },
+  "limits": [
+    "The tested artifact was a local packed candidate; registry publication and clean registry installation are separate release gates.",
+    "Only SDK0.8.1, viem2.57.3 and Tiramisu were exercised.",
+    "The main indexer uses an injected native-log source adapter. The separate EvmSource supplement performs real HTTP reads of native EntityCreated events in one confirmed block. Neither certifies an external ERC20 source or every EVM provider.",
+    "Reorg and checkpoint-save failures are controlled injections. No natural consensus reorganization is claimed.",
+    "File checkpoints and real derived entities were tested; database/RLS, deployed service/browser and scaffold CLI behavior are separate scenarios.",
+    "The confirmed-stop case loses a progress callback after a real receipt. HTTP send-response loss plus process restart is a separate scenario.",
+    "Receipt accounting identifies executed writes; balance-delta spend reports are not authoritative transaction costs. Current availability after Entity Expiration and historical retention are not promised."
+  ]
+}

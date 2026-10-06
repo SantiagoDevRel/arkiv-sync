@@ -20,6 +20,7 @@ import { detectReorg } from '../src/core/reorg.js'
 import { assertWritableChain, type ArkivNetwork } from '../src/sink/arkivSink.js'
 import { scopeToOwner, quoteValue, assertSafePredicate } from '../src/sink/predicate.js'
 import { silentLogger } from '../src/log.js'
+import { WriteReconciliationRequiredError } from '../src/sink/errors.js'
 import { days, hours, seconds } from '../src/time.js'
 import { eventId, stableStringify, addr, uint, scrubSecrets } from '../src/util.js'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -427,7 +428,7 @@ async function main() {
     assert(sink.store.has(tip), 'canonical tip present after deep reorg')
   })
 
-  // ── maxEventsPerTick caps a busy tick (bounds memory) ──
+  // ── maxEventsPerTick stops between completed chunks ──
   await test('maxEventsPerTick shrinks the range instead of loading everything', async () => {
     const source = new MockSource()
     source.build(11, 3, 'a') // 3 events/block, head 10, safeHead 8 → 27 events in range 0..8
@@ -442,6 +443,26 @@ async function main() {
     // Drain the rest in bounded ticks.
     for (let i = 0; i < 20 && !(await ix.runOnce()).upToDate; i++) {}
     eq(sink.store.size, 27, 'all 27 events eventually indexed')
+  })
+
+  await test('dense block exceeds the threshold without losing logs or advancing past its chunk', async () => {
+    const source = new MockSource()
+    source.build(5, 10, 'dense') // head4, safeHead2: three whole blocks,30 unique logs.
+    const sink = new MemorySink()
+    const store = new MemoryCursorStore()
+    const ix = makeIndexer(source, sink, store, { maxEventsPerTick: 4, fetchStepBlocks: 1 })
+    await ix.init()
+    const first = await ix.runOnce()
+    eq(first.processed, 10, 'whole dense block is processed despite threshold4')
+    eq(sink.store.size, 10, 'all first-block logs are retained')
+    eq((await store.load(ix.cursorId))!.lastProcessedBlock, 0n, 'checkpoint stops at the completed first chunk')
+    const second = await ix.runOnce()
+    eq(second.processed, 10, 'next chunk resumes with all its logs')
+    eq((await store.load(ix.cursorId))!.lastProcessedBlock, 1n, 'second checkpoint advances exactly one whole block')
+    const third = await ix.runOnce()
+    assert(third.upToDate, 'caught up after the third complete chunk')
+    eq(sink.store.size, 30, 'no log is dropped across dense-block checkpoints')
+    eq((await store.load(ix.cursorId))!.lastProcessedBlock, 2n, 'final checkpoint is safeHead')
   })
 
   // ── config fingerprint refusal ──
@@ -504,7 +525,7 @@ async function main() {
       assert(threw, `must reject injection: ${p}`)
     }
     const wrapped = scopeToOwner('event = "Transfer" && block > 100', owner)
-    assert(wrapped.startsWith(`($owner = ${owner})`), 'owner clause comes first')
+    assert(wrapped.startsWith(`($owner = addr(${owner}))`), 'typed owner clause comes first')
     scopeToOwner('name = "foo (bar)"', owner) // legit parens INSIDE a string value are fine
     let badOwner = false
     try {
@@ -609,7 +630,11 @@ async function main() {
     eq(uint('456'), '456', 'uint(string)')
     assert(t(() => uint('1.5')), 'uint throws on a non-integer')
     assert(t(() => uint('abc')), 'uint throws on a non-numeric')
-    const scrubbed = scrubSecrets('https://user:secretpass@rpc.example/p?apikey=ABC123XYZ plus 0x' + 'a'.repeat(64))
+    const fixtureUrl = new URL('https://rpc.example/p')
+    fixtureUrl.username = 'fixture'
+    fixtureUrl.password = 'secretpass'
+    fixtureUrl.searchParams.set('apikey', 'ABC123XYZ')
+    const scrubbed = scrubSecrets(fixtureUrl.href + ' plus 0x' + 'a'.repeat(64))
     assert(!scrubbed.includes('secretpass'), 'URL userinfo redacted')
     assert(!scrubbed.includes('ABC123XYZ'), 'URL apikey redacted')
     assert(!scrubbed.includes('a'.repeat(64)), '64-hex key redacted')
@@ -661,7 +686,7 @@ async function main() {
     const source = new MockSource()
     source.build(11, 1, 'a')
     const ix = makeIndexer(source, new MemorySink(), new MemoryCursorStore(), {
-      map: () => ({ attributes: { ok: 'x', bad: true as unknown as string } }),
+      map: () => ({ attributes: { ok: 'x', bad: { bad: true } as unknown as string } }),
     })
     await ix.init()
     let msg = ''
@@ -670,7 +695,7 @@ async function main() {
     } catch (e) {
       msg = (e as Error).message
     }
-    assert(/must be a string or number/.test(msg), `a boolean attribute must throw clearly (got: ${msg})`)
+    assert(/must be a scalar or SDK tagged value/.test(msg), `an object attribute must throw clearly (got: ${msg})`)
   })
 
   // ── a mid-range fetch failure commits the fetched prefix and resumes (no head discard) ──
@@ -691,6 +716,30 @@ async function main() {
     eq(sink.store.size, 9, 'resumes after the failure → total blocks 0..8')
   })
 
+  await test('ambiguous sink outcome stops start without retry or cursor advance', async () => {
+    const source = new MockSource()
+    source.build(11, 1, 'a')
+    let attempts = 0
+    const sink = new MemorySink()
+    sink.writeBatch = async () => { attempts++; throw new WriteReconciliationRequiredError('uncertain fixture write') }
+    const store = new MemoryCursorStore()
+    const ix = makeIndexer(source, sink, store)
+    let error: unknown
+    try { await ix.start() } catch (cause) { error = cause }
+    assert(error instanceof WriteReconciliationRequiredError, 'terminal write error propagates')
+    eq(attempts, 1, 'no automatic retry of uncertain write')
+    const cursor = await store.load(ix.cursorId)
+    assert(!cursor || cursor.lastProcessedBlock < 0n, 'failed tick does not advance cursor')
+  })
+  await test('uint rejects negative and unsafe numeric values', () => {
+    for (const value of [-1n, -1, Number.MAX_SAFE_INTEGER + 1]) {
+      let failed = false
+      try { uint(value) } catch { failed = true }
+      assert(failed, 'invalid uint rejected')
+    }
+    const shared = { a: 1 }
+    eq(stableStringify({ x: shared, y: shared }), '{"x":{"a":1},"y":{"a":1}}', 'shared value is preserved in content hashing')
+  })
   // ── report ──
   process.stderr.write(results.join('\n') + '\n')
   process.stderr.write(`\n${passed} passed, ${failed} failed\n`)

@@ -2,11 +2,11 @@ import { defineConfig, days, type NormalizedEvent } from 'arkiv-sync'
 
 /**
  * Your indexer config. Point it at any contract + events on any supported EVM chain.
- * Run `npm start` to begin indexing into your Arkiv (Braga) database.
+ * Run `npm start` to begin indexing into your Arkiv (configured Arkiv) database.
  *
  * Requirements:
- *   - A `.env` with PRIVATE_KEY = a THROWAWAY testnet key, funded at the Braga faucet:
- *     https://braga.hoodi.arkiv.network/faucet/
+ *   - A `.env` with PRIVATE_KEY = a THROWAWAY testnet key, funded at the configured Arkiv faucet:
+ *     the configured network
  */
 export default defineConfig({
   source: {

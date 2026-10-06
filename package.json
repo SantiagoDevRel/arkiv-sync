@@ -1,7 +1,7 @@
 {
   "name": "arkiv-sync",
-  "version": "0.2.2",
-  "description": "Point it at any smart contract on any EVM chain and turn its on-chain events into a queryable Arkiv database — no RPC, reorg, or gas knowledge required.",
+  "version": "0.3.0",
+  "description": "Index EVM contract events into Arkiv with configurable sources, checkpointed progress, and reorg recovery.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,13 +19,17 @@
     "examples",
     "arkiv.config.example.ts",
     "AGENTS.md",
+    "CLAUDE.md",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/sdk-0.8.1-evidence.json",
+    "docs/current-candidate-evidence.json",
+    "docs/verification.md"
   ],
   "scripts": {
     "start": "tsx src/bin/cli.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "test": "tsx test/run.ts",
+    "test": "tsx test/run.ts && tsx test/sdk08.ts && tsx test/missing-key-no-network.ts",
     "typecheck": "tsc --noEmit",
     "build": "node build.mjs"
   },
@@ -47,9 +51,9 @@
     "node": ">=20 <24"
   },
   "dependencies": {
-    "@arkiv-network/sdk": "^0.6.8",
+    "@arkiv-network/sdk": "0.8.1",
     "dotenv": "^17.4.2",
-    "viem": "^2.38.2"
+    "viem": "^2.57.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

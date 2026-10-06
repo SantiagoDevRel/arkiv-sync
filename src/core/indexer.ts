@@ -11,9 +11,12 @@ import type {
 } from '../types.js'
 import { sleep, scrubSecrets } from '../util.js'
 import { detectReorg, pruneCursorWindow, truncateAbove } from './reorg.js'
+import { storageAttributeName, RESERVED_STORAGE_ATTRIBUTES } from '../sink/attributes.js'
+import { WriteReconciliationRequiredError } from '../sink/errors.js'
+import { toValue } from '@arkiv-network/sdk/attr'
 
 /** Attribute keys the indexer sets itself — a mapper may not override them. */
-const RESERVED_ATTRS = new Set(['eventId', 'contentHash', 'chainId', 'contract', 'event', 'block', 'sync'])
+const RESERVED_ATTRS = RESERVED_STORAGE_ATTRIBUTES
 
 /**
  * Observability callback payload — what the worker is doing, JSON-safe. Lets a UI/dashboard show the
@@ -25,10 +28,10 @@ export type IndexerActivity =
       fromBlock: string
       toBlock: string
       count: number
-      events: Array<{ eventId: string; event: string; block: number; tx: string; args: Record<string, string> }>
+      events: Array<{ eventId: string; event: string; block: string; tx: string; args: Record<string, string> }>
     }
   | { kind: 'writing'; count: number } // about to write `count` records — UI shows a "writing…" state
-  | { kind: 'write'; op: 'create' | 'update' | 'skip'; eventId: string; block: number; key?: string; txHash?: string }
+  | { kind: 'write'; op: 'create' | 'update' | 'skip'; eventId: string; block: string; key?: string; txHash?: string }
   | {
       kind: 'tick'
       head: string
@@ -61,9 +64,8 @@ export interface IndexerOptions {
   /** Max blocks advanced per tick, to bound the block span during backfill. Default 5000. */
   maxBlocksPerTick?: number
   /**
-   * HARD cap on events materialized in one tick — bounds memory regardless of block density. When a
-   * tick would exceed it, the block range is SHRUNK (the cursor advances less), never widened.
-   * Default 2000.
+   * Stop fetching after a completed chunk reaches this threshold. A dense chunk can exceed it;
+   * checkpoints advance through whole fetched blocks and resume on the next tick. Default2000.
    */
   maxEventsPerTick?: number
   /** Block step per getLogs fetch while bounding by events. Default 1000. */
@@ -252,9 +254,8 @@ export class Indexer {
       return { head, safeHead, processed: 0, written: 0, reorged, upToDate: recoverUntil === undefined, lagBlocks: lag }
     }
 
-    // Fetch stepping through [fromB, toB], STOPPING early if we'd exceed maxEventsPerTick. This
-    // bounds memory by event COUNT (block density is unbounded), SHRINKING the range rather than
-    // widening it — the cursor then advances only to the last fully-fetched block.
+    // Stop between completed fetch chunks once maxEventsPerTick is reached. One dense chunk can
+    // exceed the threshold; advance only through fully fetched blocks so no log is dropped.
     const events: NormalizedEvent[] = []
     let effectiveTo = fromB - 1n
     for (let step = fromB; step <= toB; ) {
@@ -292,7 +293,7 @@ export class Indexer {
         events: events.slice(0, 100).map((e) => ({
           eventId: e.eventId,
           event: e.eventName,
-          block: Number(e.blockNumber),
+          block: e.blockNumber.toString(),
           tx: e.transactionHash,
           args: Object.fromEntries(
             Object.entries(e.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : String(v)]),
@@ -315,7 +316,7 @@ export class Indexer {
     }
 
     const written = await this.writeRecords(records)
-    for (const id of removedIds) await this.sink.delete(id)
+    for (const id of removedIds) await this.sink.delete(id, { sync: this.cursorId })
 
     // 3) Reorg reconciliation — delete orphaned events in the re-derived range. Correct across tick
     //    boundaries AND at any reorg depth (query-based, not window-bound).
@@ -396,6 +397,10 @@ export class Indexer {
         const progressing = !r.upToDate && (r.processed > 0 || r.written > 0)
         await sleep(progressing ? 250 : this.pollIntervalMs)
       } catch (err) {
+        if (err instanceof WriteReconciliationRequiredError) {
+          this.log.error('Write outcome requires operator reconciliation; worker stopped.', scrubSecrets(err))
+          throw err
+        }
         failures++
         this.log.error(`tick failed (${failures}/${this.maxConsecutiveFailures}), retrying in ${backoff}ms`, scrubSecrets(err))
         if (failures >= this.maxConsecutiveFailures) {
@@ -421,14 +426,14 @@ export class Indexer {
     // Stream writes LIVE (per batch as each tx commits) so a UI doesn't look frozen during the
     // signing window, and the write rate is real-time rather than one burst at the end.
     let onWritten: WriteProgress | undefined
-    let blockOf: Map<string, number> | undefined
+    let blockOf: Map<string, string> | undefined
     const emittedIds = new Set<string>()
     if (this.onActivity) {
-      blockOf = new Map(records.map((r) => [r.eventId, Number(r.attributes.find((a) => a.key === 'block')?.value ?? 0)]))
+      blockOf = new Map(records.map((r) => [r.eventId, String(r.attributes.find((a) => a.key === 'block')?.value ?? '0')]))
       this.onActivity({ kind: 'writing', count: records.length })
       onWritten = (w) => {
         emittedIds.add(w.eventId)
-        this.onActivity!({ kind: 'write', op: w.op, eventId: w.eventId, block: blockOf!.get(w.eventId) ?? 0, key: w.key, txHash: w.txHash })
+        this.onActivity!({ kind: 'write', op: w.op, eventId: w.eventId, block: blockOf!.get(w.eventId) ?? '0', key: w.key, txHash: w.txHash })
       }
     }
     const results = this.sink.writeBatch
@@ -442,7 +447,7 @@ export class Indexer {
         const res = results[i]
         if (!res) return
         emittedIds.add(rec.eventId)
-        this.onActivity!({ kind: 'write', op: res.op, eventId: rec.eventId, block: blockOf!.get(rec.eventId) ?? 0, key: res.key, txHash: res.txHash })
+        this.onActivity!({ kind: 'write', op: res.op, eventId: rec.eventId, block: blockOf!.get(rec.eventId) ?? '0', key: res.key, txHash: res.txHash })
       })
     }
     return results.filter((r) => r.op !== 'skip').length
@@ -468,27 +473,27 @@ export class Indexer {
       { key: 'chainId', value: e.chainId },
       { key: 'contract', value: e.address },
       { key: 'event', value: e.eventName },
-      { key: 'block', value: Number(e.blockNumber) },
+      { key: 'block', value: e.blockNumber },
       // Identifies THIS indexer instance, so reorg reconciliation only deletes our own records
       // (two indexers sharing one wallet must not clobber each other in an overlapping block range).
       { key: 'sync', value: this.cursorId },
     ]
     for (const [key, raw] of Object.entries(userAttrs)) {
-      if (RESERVED_ATTRS.has(key)) {
+      if (RESERVED_ATTRS.has(storageAttributeName(key))) {
         throw new Error(
           `Mapper attribute "${key}" is reserved by Arkiv Sync (${[...RESERVED_ATTRS].join(', ')}). Rename it.`,
         )
       }
-      // Coerce bigint → string defensively (Arkiv attribute values are string|number).
-      const value = typeof raw === 'bigint' ? (raw as bigint).toString() : raw
-      // Fail LOUD on a non-string|number attribute — the SDK silently DROPS such values, which would
-      // lose a queryable field with no error. Force the mapper to stringify (or use `data`).
-      if (typeof value !== 'string' && typeof value !== 'number') {
+      // SDK0.8 validates explicit tags and supported bare scalar values.
+      const value = raw
+      // Rich objects/arrays belong in payload. Reject them before admitting a sink write.
+      if (value === null || value === undefined || (typeof value === 'object' && !('type' in value))) {
         throw new Error(
-          `Attribute "${key}" must be a string or number (got ${value === null ? 'null' : typeof value}). ` +
+          `Attribute "${key}" must be a scalar or SDK tagged value (got ${value === null ? 'null' : typeof value}). ` +
             `Stringify it in map() — e.g. String(x) / addr(x) / uint(x) — or put rich data in \`data\`.`,
         )
       }
+      toValue(value, storageAttributeName(key))
       attributes.push({ key, value })
     }
 
@@ -497,7 +502,7 @@ export class Indexer {
         event: e.eventName,
         chainId: e.chainId,
         contract: e.address,
-        block: Number(e.blockNumber),
+        block: e.blockNumber.toString(),
         blockHash: e.blockHash,
         tx: e.transactionHash,
         logIndex: e.logIndex,
@@ -509,6 +514,7 @@ export class Indexer {
       attributes,
       payload,
       expiresInSeconds: mapped.ttlSeconds ?? this.ttlSeconds,
+      extendOnUpdate: mapped.extendOnUpdate,
     }
   }
 }

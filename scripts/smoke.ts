@@ -1,9 +1,9 @@
 /**
  * End-to-end smoke — the real thing, bounded for speed/cost, via the library's `quickCheck`:
  *
- *   Sepolia (real WETH Transfer logs)  →  Arkiv Sync engine  →  Arkiv (Braga) entities  →  query back
+ *   Sepolia (real WETH Transfer logs)  →  Arkiv Sync engine  →  Arkiv (configured Arkiv) entities  →  query back
  *
- * Uses the repo's demo config (arkiv.config.ts). Requires PRIVATE_KEY in .env (a funded Braga
+ * Uses the repo's demo config (arkiv.config.ts). Requires PRIVATE_KEY in .env (a funded configured Arkiv
  * testnet burner). Run: `npm run smoke`.
  */
 import dotenv from 'dotenv'
