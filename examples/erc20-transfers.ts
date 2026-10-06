@@ -4,7 +4,7 @@
  * (needs PRIVATE_KEY in .env).
  */
 import 'dotenv/config'
-import { createIndexer, defineConfig, days, type NormalizedEvent } from '../src/index.js'
+import { createIndexer, defineConfig, days, type NormalizedEvent } from 'arkiv-sync'
 
 const indexer = createIndexer(
   defineConfig({

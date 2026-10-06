@@ -66,15 +66,14 @@ async function main() {
 
   if (install) {
     console.log('Installing dependencies…')
-    execSync('npm install --no-audit --no-fund', { cwd: dest, stdio: 'inherit' })
+    execSync('npm install --ignore-scripts --no-audit --no-fund', { cwd: dest, stdio: 'inherit' })
   }
 
   console.log(`\n✓ Created ${dirName}\n`)
   console.log('Next steps:')
   console.log(`  cd ${dirName}`)
   if (!install) console.log('  npm install')
-  console.log('  cp .env.example .env        # add a funded Braga testnet PRIVATE_KEY')
-  console.log('                              # faucet: https://braga.hoodi.arkiv.network/faucet/')
+  console.log('  cp .env.example .env        # add a locally held key funded on the configured testnet')
   console.log('  npm run verify              # bounded end-to-end check (Sepolia → Arkiv → query)')
   console.log('  npm start                   # start indexing 24/7')
   console.log('\nEdit arkiv.config.ts to point at your own contract + events.\n')

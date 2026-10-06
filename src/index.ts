@@ -30,7 +30,7 @@ export {
   ArkivSink,
   type ArkivSinkOptions,
   type ArkivNetwork,
-  BRAGA_NETWORK,
+  TIRAMISU_NETWORK,
   assertWritableChain,
 } from './sink/arkivSink.js'
 export {
@@ -40,6 +40,8 @@ export {
   type QueryParams,
   type ArkivReaderOptions,
 } from './sink/arkivQuery.js'
+export { storageAttributeName } from './sink/attributes.js'
+export { WriteReconciliationRequiredError } from './sink/errors.js'
 
 // Safe predicate builders — for consumers composing queries from (untrusted) values.
 export { quoteValue, assertSafePredicate, assertSafeOwner } from './sink/predicate.js'

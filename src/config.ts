@@ -5,7 +5,8 @@ import { days } from './time.js'
 import { createLogger } from './log.js'
 import { EvmSource } from './source/evmSource.js'
 import { resolveSourceChain, type SourceChainDef } from './source/chains.js'
-import { ArkivSink, BRAGA_NETWORK, type ArkivNetwork } from './sink/arkivSink.js'
+import { ArkivSink, TIRAMISU_NETWORK, type ArkivNetwork } from './sink/arkivSink.js'
+import { quoteValue } from './sink/predicate.js'
 import { createArkivReader, type DecodedEntity } from './sink/arkivQuery.js'
 import { FileCursorStore, MemoryCursorStore } from './core/cursor.js'
 import { Indexer, type IndexerActivity } from './core/indexer.js'
@@ -35,7 +36,7 @@ export interface ArkivSyncConfig {
     pollIntervalMs?: number
     /** Max blocks per getLogs request (auto-splits on RPC limits). Default 2000. */
     batchSize?: number
-    /** Hard cap on events processed per tick — bounds memory under busy contracts. Default 2000. */
+    /** Stop between completed fetch chunks after this threshold. A dense chunk can exceed it. Default2000. */
     maxEventsPerTick?: number
     /** Your own RPC URL(s). If unset, a public pool with rotation is used. */
     rpcUrls?: string[]
@@ -47,15 +48,15 @@ export interface ArkivSyncConfig {
    * `attributes` become queryable fields; `data` overrides the stored payload.
    */
   map?: EventMapper
-  /** Override the sink. Default: Arkiv (Braga), signing locally with PRIVATE_KEY from env. */
+  /** Override the sink. Default: SDK0.8.1 Tiramisu, signing locally with PRIVATE_KEY from env. */
   sink?: Sink
-  /** Arkiv network the sink writes to (the SINK target — NOT the source chain). Default: Braga testnet.
+  /** Arkiv network the sink writes to (the SINK target — NOT the source chain). Default: Tiramisu testnet.
    *  When Arkiv mainnet launches, the swap is this one field (+ allowMainnet). */
   arkivNetwork?: ArkivNetwork
   /** Opt in to writing to a NON-testnet arkivNetwork (real funds). Default false (or ARKIV_ALLOW_MAINNET=1). */
   allowMainnet?: boolean
-  /** Entities per mutateEntities tx (the sink write batch). Default 50; clamped to 1000. Raise toward
-   *  1000 for higher single-wallet throughput (~150–500 ev/s); bigger batch = bigger atomic blast radius. */
+  /** Records per executeBatch transaction. Default50 is a package policy; choose from actual
+   * encoded size, gas estimates, provider limits and authorized spend. No universal1000-op cap. */
   sinkBatchSize?: number
   /** Cursor namespace label. Default: derived from the first contract address. */
   label?: string
@@ -123,7 +124,7 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
   if (!privateKey) {
     throw new Error(
       'PRIVATE_KEY is not set. Copy .env.example to .env and add a THROWAWAY testnet key ' +
-        'funded at https://braga.hoodi.arkiv.network/faucet/ — or pass a custom `sink` in config.',
+        'funded on the configured Arkiv testnet — or pass a caller-owned `sink` in config.',
     )
   }
   return new ArkivSink({
@@ -142,8 +143,8 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
  */
 export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrides = {}): Indexer {
   const logger = config.logger ?? createLogger()
-  const source = overrides.source ?? buildSource(config, logger)
   const sink = overrides.sink ?? buildSink(config, logger)
+  const source = overrides.source ?? buildSource(config, logger)
   const map: EventMapper = config.map ?? (() => ({}))
   const label = config.label ?? normalizeAddresses(config.source.contract)[0]!
 
@@ -162,17 +163,18 @@ export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrid
     reorgWindow: overrides.reorgWindow,
     endBlock: overrides.endBlock,
     maxEventsPerTick: config.source.maxEventsPerTick,
-    configFingerprint: computeConfigFingerprint(config),
+    configFingerprint: computeConfigFingerprint(config, sink),
     onActivity: overrides.onActivity,
   })
 }
 
 /** Stable fingerprint of what defines a cursor's data: chain + contracts + event signatures. */
-function computeConfigFingerprint(config: ArkivSyncConfig): string {
+function computeConfigFingerprint(config: ArkivSyncConfig, sink: Sink): string {
   const chain = typeof config.source.chain === 'string' ? config.source.chain : String(config.source.chain.chain.id)
   const contracts = normalizeAddresses(config.source.contract).slice().sort()
   const events = config.source.events.map((s) => s.trim()).slice().sort()
-  return createHash('sha256').update(JSON.stringify({ chain, contracts, events })).digest('hex').slice(0, 16)
+  const sinkNetwork = sink.identity ?? sink.name
+  return createHash('sha256').update(JSON.stringify({ storageVersion: 3, chain, contracts, events, sinkNetwork })).digest('hex').slice(0, 16)
 }
 
 export interface QuickCheckResult {
@@ -196,35 +198,38 @@ export async function quickCheck(
   opts: { scanBlocks?: number; maxEvents?: number } = {},
 ): Promise<QuickCheckResult> {
   const logger = config.logger ?? createLogger()
-  const source = buildSource(config, logger)
   const sink = buildSink(config, logger)
   if (!(sink instanceof ArkivSink)) {
     throw new Error('quickCheck requires the default Arkiv sink (do not pass a custom `sink`).')
   }
+  const source = buildSource(config, logger)
 
   await source.preflight() // needed to scan; the indexer re-checks on init()
   const head = await source.getHeadBlock()
-  const scanBlocks = BigInt(opts.scanBlocks ?? 800)
+  const scanCount = opts.scanBlocks ?? 800
   const maxEvents = opts.maxEvents ?? 50
+  if (!Number.isSafeInteger(scanCount) || scanCount < 1 || !Number.isSafeInteger(maxEvents) || maxEvents < 1) {
+    throw new Error('quickCheck scanBlocks and maxEvents must be positive safe integers.')
+  }
+  const scanBlocks = BigInt(scanCount)
+  const confirmations = BigInt(config.source.confirmations ?? resolveSourceChain(config.source.chain).defaultConfirmations)
+  const safeHead = head - confirmations
 
   // Find a recent block with events. Prefer one with ≤maxEvents (cheap check); but on a BUSY mainnet
   // contract every block may exceed that — so also remember the least-busy block seen and fall back
   // to it, so the scan always terminates fast instead of probing thousands of blocks.
   let target: bigint | null = null
-  let leastBusy: { block: bigint; count: number } | null = null
-  for (let b = head - 6n; b > head - scanBlocks && b >= 0n; b--) {
+  for (let b = safeHead; b > safeHead - scanBlocks && b >= 0n; b--) {
     const got = await source.getEvents(b, b)
     if (got.length >= 1) {
       if (got.length <= maxEvents) {
         target = b
         break
       }
-      if (!leastBusy || got.length < leastBusy.count) leastBusy = { block: b, count: got.length }
     }
   }
-  if (target === null && leastBusy) target = leastBusy.block
   if (target === null) {
-    return { ok: false, reason: `no events for this contract + event in the last ${scanBlocks} blocks — check the contract address + event signature`, written: 0, queried: 0, sample: [] }
+    return { ok: false, reason: `no confirmed source block with 1..${maxEvents} matching events in the last ${scanBlocks} blocks; no writes admitted`, written: 0, queried: 0, sample: [] }
   }
   logger.info(`quickCheck window: block ${target}`)
 
@@ -249,9 +254,9 @@ export async function quickCheck(
   const contract = normalizeAddresses(config.source.contract)[0]!
   const reader = createArkivReader({
     rpcUrl: process.env.ARKIV_RPC_URL,
-    chain: (config.arkivNetwork ?? BRAGA_NETWORK).chain,
+    chain: (config.arkivNetwork ?? TIRAMISU_NETWORK).chain,
   })
-  const sample = await reader.query(`contract = "${contract}"`, {
+  const sample = await reader.query(`contract = ${quoteValue(contract)}`, {
     owner: sink.address,
     limit: 25,
     sortBy: 'block',

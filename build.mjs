@@ -4,7 +4,7 @@
  * resolve from the consumer's node_modules.
  */
 import { build } from 'esbuild'
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 
 const external = ['@arkiv-network/sdk', '@arkiv-network/sdk/*', 'viem', 'viem/*', 'dotenv']
@@ -29,12 +29,8 @@ await build({
   banner: { js: '#!/usr/bin/env node' },
 })
 
-// Type declarations → dist/index.d.ts (rootDir=src). Best-effort: runtime works without them.
-try {
-  execSync('npx tsc -p tsconfig.build.json', { stdio: 'inherit' })
-  console.log('✓ types emitted (dist/index.d.ts)')
-} catch {
-  console.warn('! type emit failed — shipping JS without .d.ts (runtime unaffected)')
-}
+// Type declarations are part of the public contract; fail the build if they cannot be emitted.
+execFileSync(process.execPath, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.build.json'], { stdio: 'inherit' })
+console.log('✓ types emitted (dist/index.d.ts)')
 
 console.log('✓ build complete: dist/index.js, dist/bin/cli.js')

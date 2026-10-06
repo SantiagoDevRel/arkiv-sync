@@ -9,8 +9,10 @@
  * Two seams keep it multichain + multi-sink:
  *   - SourceAdapter: where events come from (Sepolia today; Base/Arbitrum = a new adapter).
  *   - Sink:          where the derived view lives (Arkiv today; swappable by design,
- *                    because Braga will be decommissioned).
+ *                    because the configured Arkiv network will be decommissioned).
  */
+
+import type { ValueInput } from '@arkiv-network/sdk/attr'
 
 export type Hex = `0x${string}`
 
@@ -58,15 +60,18 @@ export interface SourceAdapter {
   preflight(): Promise<void>
 }
 
-/** What a Sink stores for one event. Attribute values are string|number (Arkiv constraint). */
+/** What a Sink stores for one event. SDK0.8 scalars/tagged values are accepted. */
 export interface SinkRecord {
   eventId: string
-  attributes: { key: string; value: string | number }[]
+  attributes: { key: string; value: ValueInput }[]
   /** Decoded payload (JSON-serializable). */
   payload: unknown
   contentType?: string
-  /** Lifetime in SECONDS before the sink may delete it. Arkiv expiry is in seconds. */
+  /** Requested lifetime in seconds; SDK0.8 requires a positive multiple of two. */
   expiresInSeconds: number
+  /** On a changed existing entity, also extend to at least this lifetime from execution.
+   * Default false: a patch never changes Entity Expiration and this option never shortens it. */
+  extendOnUpdate?: boolean
 }
 
 export type WriteOp = 'create' | 'update' | 'skip'
@@ -86,10 +91,12 @@ export interface WriteResult {
 
 /**
  * Sink: where the derived view is written. Arkiv today; the interface is deliberately
- * small so a Postgres/SQLite/file sink is a drop-in replacement (Braga is temporary).
+ * small so a Postgres/SQLite/file sink is a drop-in replacement (the configured Arkiv network is temporary).
  */
 export interface Sink {
   readonly name: string
+  /** Persistent destination/schema/writer identity used to refuse incompatible source cursors. */
+  readonly identity?: string
   /** Preflight: connectivity + (for on-chain sinks) a funded-wallet balance check. Throws human errors. */
   init(): Promise<void>
   /** Idempotent write: create if new, full-replace if the eventId exists and changed, else skip. */
@@ -101,7 +108,7 @@ export interface Sink {
    */
   writeBatch?(records: SinkRecord[], onWritten?: WriteProgress): Promise<WriteResult[]>
   /** Remove the record for an orphaned event (used when a reorg drops a log). */
-  delete(eventId: string): Promise<void>
+  delete(eventId: string, scope?: Record<string,string|number>): Promise<void>
   /**
    * Optional reorg reconciliation: delete the sink's own records in block range [fromBlock,toBlock]
    * whose eventId is NOT in `keep` (the canonical set just re-derived). Returns how many were
@@ -128,10 +135,12 @@ export interface Sink {
  * fields (e.g. from/to for a Transfer). `data` overrides the stored payload (defaults to args).
  */
 export type MappedEntity = {
-  attributes?: Record<string, string | number>
+  attributes?: Record<string, ValueInput>
   data?: unknown
   /** Override the default TTL for this specific event, in seconds. */
   ttlSeconds?: number
+  /** Explicit changed-record Lifetime Extension; default false preserves existing deadline. */
+  extendOnUpdate?: boolean
 } | null
 
 export type EventMapper = (event: NormalizedEvent) => MappedEntity

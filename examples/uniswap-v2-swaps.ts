@@ -1,18 +1,18 @@
 /**
  * Index Uniswap V2 Swaps into a queryable Arkiv database — a NON-Transfer event with several
  * amounts. Shows the addr()/uint() coercers (no more hand-written String(...).toLowerCase()).
- * Run: `tsx examples/uniswap-v2-swaps.ts` (needs a funded Braga PRIVATE_KEY in .env).
+ * Run: `tsx examples/uniswap-v2-swaps.ts` (needs a funded configured Arkiv PRIVATE_KEY in .env).
  *
  * Query it back, e.g.:
- *   const rows = await createArkivReader().query('event = "Swap"', { owner: '0xYOUR_WALLET', limit: 25 })
+ *   const rows = await createArkivReader().query("event = str('Swap')", { owner: '0xYOUR_WALLET', limit: 25 })
  */
 import 'dotenv/config'
-import { createIndexer, defineConfig, addr, uint, days, type NormalizedEvent } from '../src/index.js'
+import { createIndexer, defineConfig, addr, uint, days, type NormalizedEvent } from 'arkiv-sync'
 
 const indexer = createIndexer(
   defineConfig({
     source: {
-      // Mainnet source is READ-ONLY here (reading logs signs nothing) — the SINK stays Braga testnet.
+      // Mainnet source is READ-ONLY here (reading logs signs nothing) — the SINK stays configured Arkiv testnet.
       chain: 'ethereum',
       contract: '0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc', // Uniswap V2 USDC/WETH pair
       events: [

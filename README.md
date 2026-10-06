@@ -1,203 +1,111 @@
-# Arkiv Sync
+# arkiv-sync
 
-**Point it at any smart contract on any EVM chain and turn its on-chain events into a queryable [Arkiv](https://docs.arkiv.network) database — no RPC, reorg, or gas knowledge required.**
+Read events from a source EVM chain and store a derived, queryable view as Arkiv entities. The source chain stays canonical. This is an EVM-to-Arkiv indexer; an Arkiv-to-application mirror is a separate integration.
 
-Arkiv is a **queryable database on Ethereum** (think Supabase/Postgres, not "a blockchain"). Arkiv Sync is the always-on worker that watches a chain and writes each event as a queryable, expiring Arkiv entity. The chain is the source of truth; **Arkiv is a derived view that can always be re-derived** — which is exactly what makes reorgs and restarts safe.
+## SDK 0.8 migration candidate
 
-```
-  Sepolia (any contract's events)  ──▶  Arkiv Sync  ──▶  Arkiv / Braga (queryable entities)
-        viem getLogs                  decode · dedup ·          your app queries this
-     RPC pool + rotation             reorg · cursor · TTL        (no RPC, no gas)
-```
+This source targets `arkiv-sync@0.3.0`, `@arkiv-network/sdk@0.8.1`, viem 2 and Node 20–22. Version 0.3.0 is a local candidate until it is published. Test the built tarball directly; `npm install arkiv-sync@latest` may still install the older SDK 0.6 package.
 
-**Live demo:** https://arkiv-indexer.vercel.app · **Install:** `npm create arkiv-sync@latest` ([npm](https://www.npmjs.com/package/arkiv-sync))
-
----
-
-## Three modes (don't overlap)
-
-| Mode | What it is | Where |
-|---|---|---|
-| **npm library** | the **runtime** — the worker that watches the chain 24/7 (what no MCP can be) | `src/` → `arkiv-sync` |
-| **Skill** | the **knowledge** — teaches an LLM to wire the library + the gotchas | [`skill/SKILL.md`](./skill/SKILL.md) |
-| **Template** | `npm create arkiv-sync` — a ready project that indexes on `npm start` | [`create-arkiv-sync/`](./create-arkiv-sync/) |
-
-The library is the backbone; the skill and template sit on top without rewriting it.
-
-## Requirements (preflight)
-
-1. **Node 20–22** (`node -v`). **Not Node 24** — it silently hangs Arkiv entity updates (the tx lands but the promise never resolves; arkiv-sdk-js #14). `engines` enforces `<24`.
-2. A **throwaway testnet wallet** funded with GLM at the [Braga faucet](https://braga.hoodi.arkiv.network/faucet/). Its `PRIVATE_KEY` goes in `.env` (gitignored). It signs Arkiv writes **locally** via viem — the key never leaves your machine, is never logged, and **must never hold real funds** (Arkiv Sync refuses any non-allowlisted chain).
-3. The target: a **contract address + chain + event signature(s)**.
-
-## Quickstart
-
-### With the template
-
-```bash
-npm create arkiv-sync@latest my-indexer   # (or: node create-arkiv-sync/index.mjs my-indexer)
-cd my-indexer
-npm install
-cp .env.example .env          # add your funded Braga testnet PRIVATE_KEY
-npm run verify                # bounded end-to-end check (Sepolia → Arkiv → query)
-npm start                     # index 24/7
+```sh
+npm install --ignore-scripts
+npm run typecheck
+npm test
+npm run build
+npm pack --ignore-scripts
 ```
 
-### In this repo (the reference implementation)
+The tests use deterministic source adapters and actual SDK clients with an in-memory RPC transport. They do not send network transactions. Funded testnet receipt/readback evidence must be recorded separately.
 
-```bash
-npm install
-cp .env.example .env          # add PRIVATE_KEY
-npm run smoke                 # live end-to-end: index a real Sepolia block → Arkiv → query back
-npm start                     # runs arkiv.config.ts (WETH Transfers on Sepolia)
-```
+The current candidate validates signing admission before source construction and passes52 offline cases plus18 scaffold checks. A separate actual Tiramisu continuation follows the public source/indexer/sink through a paginated reader, persisted SQLite, authenticated API and React. See [verification](docs/verification.md) for exact source digests, receipts and limits; earlier funded records retain their original bundle identity.
 
-## Configure (the declarative layer)
+## Configure source and sink
 
-Everything is one `arkiv.config.ts`. Adding another contract or chain is just another config — the engine never changes.
-
-```ts
-import { defineConfig, days, type NormalizedEvent } from 'arkiv-sync'
+```typescript
+import { defineConfig, days, addr, uint } from 'arkiv-sync'
 
 export default defineConfig({
   source: {
     chain: 'sepolia',
-    contract: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
-    events: ['Transfer(address indexed from, address indexed to, uint256 value)'], // "event " optional
-    fromBlock: 'latest',   // or a block number to backfill history
-    // confirmations defaults per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75) — set a number to override
+    contract: '0xfff9976782d46cc05630d1f6ebab18b2324d6b14',
+    events: ['Transfer(address indexed from, address indexed to, uint256 value)'],
+    fromBlock: 'latest',
   },
-  ttlSeconds: days(30),    // TTL is in SECONDS — always use the helpers
-  map: (e: NormalizedEvent) => ({
-    attributes: {          // queryable fields (string | number; coerce bigint with String())
-      from: String(e.args.from).toLowerCase(),
-      to: String(e.args.to).toLowerCase(),
-      value: String(e.args.value),
-    },
-    // return null to SKIP an event; `data: {...}` overrides the stored payload (defaults to the full event)
-  }),
+  ttlSeconds: days(30),
+  map: ({ args }) => ({ attributes: {
+    from: addr(args.from), to: addr(args.to), value: uint(args.value),
+  } }),
 })
 ```
 
-The indexer always adds system attributes — `eventId, contentHash, chainId, contract, event, block, sync` (reserved; setting any in `map` throws).
+Built-in source keys are `ethereum`, `sepolia`, `base`, `base-sepolia`, `bsc`, and `bsc-testnet`; custom `SourceChainDef` values are supported. Verify current RPC reachability, source chain ID and confirmation policy for the selected source. Mainnet source reads do not authorize sink writes on a mainnet.
 
-## Query the derived database
+The default sink uses the published SDK Tiramisu chain. For another Arkiv testnet, supply `arkivNetwork` with an explicit verified viem `Chain`, `name` and `isTestnet: true`. Sorbet is not exported by SDK 0.8.1; use `defineChain` from viem with operator-provided chain ID, RPC and native-currency configuration. Do not invent an SDK chain import, explorer or faucet URL.
 
-```ts
-import { createArkivReader } from 'arkiv-sync'
+Set a locally held, funded testnet `PRIVATE_KEY` and optional `ARKIV_RPC_URL` in the consumer's secret store. Keep the key out of prompts, bundles, URLs and logs. `createIndexer` also accepts a caller-owned `sink`; `ArkivSink` accepts exactly one `account` or `privateKey`, plus an optional custom transport. The library validates the observed RPC chain ID before each admitted write and always refuses known EVM-mainnet sink IDs.
 
-const reader = createArkivReader()
-const rows = await reader.query('event = "Transfer"', {
-  owner: '0xYOUR_INDEXER_WALLET',  // ALWAYS owner-scope — the Arkiv store is shared/public
-  limit: 25,
-  sortBy: 'block', sortDir: 'desc', // client-side sort (Arkiv has no server-side orderBy)
-})
-// rows[i] = { key, owner, attributes: {from,to,value,block,…}, data, expiresAtBlock }
-// `data` defaults to { event, chainId, contract, block, blockHash, tx, logIndex, args } (args nested under .args)
-```
+```typescript
+import { ArkivSink, createIndexer, silentLogger } from 'arkiv-sync'
+import type { ArkivNetwork } from 'arkiv-sync'
+import type { Account } from 'viem'
 
-Predicate operators: `=`, `!=`, numeric `>`/`>=`/`<`/`<=`, combined with `&&`/`||`. String values use double quotes; values containing quotes/comment tokens are rejected (injection-safe).
-
-## Use it in your app (as a library)
-
-The published package works exactly like this repo:
-
-```bash
-npm i arkiv-sync          # or scaffold a whole project: npm create arkiv-sync@latest my-indexer
-```
-
-```ts
-import { createIndexer, defineConfig, createArkivReader, addr, uint, days } from 'arkiv-sync'
-```
-
-- **Coercers** — `addr()` / `uint()` / `lower()` validate event args in `map()`, so a mistyped arg name **throws** instead of silently storing the string `"undefined"`.
-- **Safe predicates** — build queries from untrusted values with `quoteValue()` / `assertSafePredicate()` (the same guard the reader uses); never string-concatenate raw user input.
-- **Always pass `owner`** to `reader.query(...)` — the Arkiv store is shared/public, so an un-scoped read returns everyone's entities.
-- **Multiple indexers on one wallet?** Give each a distinct `label` — reorg reconciliation is scoped per-indexer (a `sync` attribute), so they never delete each other's entities.
-
-## How it works (the hard parts, handled in code)
-
-- **Reorgs** — indexes only `head − confirmations` (default is per-chain: Sepolia 6 · ETH 24 · Base 40 · BSC 75); tracks recent block hashes; on a reorg it rolls back to the common ancestor and **re-derives**, deleting orphaned events via an owner-scoped block-range reconciliation (query-based, at any depth; detection covers the recent `reorgWindow` blocks). A transient RPC error is never mistaken for a reorg (it throws → retry, vs a genuinely-absent block).
-- **Idempotency** — every event's key is `chainId:txHash:logIndex`; writes are create-or-skip by a sha256 content hash, so restarts and overlaps never duplicate.
-- **Cursor** — persisted atomically to `.arkiv-sync/` (write-then-rename); the worker resumes exactly where it stopped.
-- **Zero-friction RPCs** — a viem `fallback` pool over public Sepolia endpoints with automatic rotation; a throttled/dead endpoint is skipped silently. Set `SEPOLIA_RPC_URL` for your own. `getLogs` auto-splits when an RPC rejects a too-wide range.
-- **Preflight + gas** — checks the Braga wallet's GLM balance and prints the faucet link instead of a cryptic error. Writes are **batched** (one `mutateEntities` tx per ~50 events). Measured cost ≈ **1–3 ×10⁻⁸ GLM/event** (1 GLM ≈ tens of millions of events).
-- **Full-replace updates** — Arkiv updates replace the whole entity; the engine always sends the complete derived record, so replace is correct.
-
-## Multichain
-
-Built-in source chains (set `source.chain` to one of these keys): **`ethereum`** (1) · **`sepolia`** (11155111) · **`base`** (8453) · **`base-sepolia`** (84532) · **`bsc`** (56) · **`bsc-testnet`** (97). Each ships verified keyless public RPCs (with rotation) + a per-chain reorg-safe `defaultConfirmations` (override via `source.confirmations`). For any other EVM chain, pass a chain definition object (from `viem/chains`) + `rpcUrls` + `defaultConfirmations` instead of a key.
-
-**Mainnets are READ-ONLY here.** Reading a contract's logs signs nothing and spends nothing, so indexing **mainnet** events is safe. The only thing that holds a key is the **sink** — which is always Arkiv/**Braga testnet**. So: source = any chain (mainnet or testnet), sink = Braga. The sink is likewise swappable (Braga decommissions ~Sep 2026 — this is a reference implementation + demo + friction sensor, not a mass-onboarding to Braga).
-
-> RPC notes (verified 2026-06-15): BSC's official `bsc-dataseed*` seeds **disable `eth_getLogs`** (and the bnbchain testnet seed rate-limits it), so they're excluded — publicnode/1rpc/drpc are used. Public endpoints are best-effort; set your own RPC via `source.rpcUrls` for sustained load.
-
-## Going to mainnet (the sink)
-
-The sink is **testnet-locked by default** (Braga). When Arkiv mainnet launches, the swap is **one config field** — pass an `arkivNetwork` and opt in with `allowMainnet: true` (or `ARKIV_ALLOW_MAINNET=1`):
-
-```ts
-import { defineConfig, type ArkivNetwork } from 'arkiv-sync'
-
-const ARKIV_MAINNET: ArkivNetwork = {
-  chain: /* the arkiv-mainnet viem chain */, name: 'arkiv:mainnet', isTestnet: false,
-  explorerUrl: 'https://explorer.…',
+export function withOperatorSink(config: Parameters<typeof createIndexer>[0],
+  account: Account, network: ArkivNetwork) {
+  const sink = new ArkivSink({ account, network, logger: silentLogger, batchSize: 50 })
+  return createIndexer(config, { sink })
 }
-export default defineConfig({ /* …source… */, arkivNetwork: ARKIV_MAINNET, allowMainnet: true })
 ```
 
-Guards that always hold (in `assertWritableChain`): a known **EVM mainnet** id (Ethereum/Base/BSC/…) is **never** a valid sink, the RPC's `chainId` must match the configured network, and a non-testnet network is refused without the explicit opt-in. With real funds, sign with a secure signer (KMS/HSM), not a raw `.env` key.
+Run the scaffold or CLI only after source/sink preflight and an approved spend budget. `npm run smoke` and the scaffold's `npm run verify` execute real writes; they are not readonly checks.
 
-## Project structure
+## Stored attributes and replacement
 
+Arkiv Sync stores lowercase names. The stable mapping converts camelCase to snake_case: `eventId` → `event_id`, `chainId` → `chain_id`, `contentHash` → `content_hash`, and `tokenId` → `token_id`. A mapping collision such as `fooBar` plus `foo_bar` fails before writes. Query the stored names.
+
+The indexer reserves `event_id`, `chain_id`, `content_hash`, `contract`, `event`, `block` and `sync`, including camelCase aliases. `block` and `chain_id` use `u64`; mapper attributes support SDK tagged values and bare scalars. Put rich objects, arrays and nulls in payload. The default payload keeps block numbers as exact decimal strings; activity events do too.
+
+`SinkRecord.expiresInSeconds` and mapper `ttlSeconds` remain seconds. SDK 0.8 requires a positive multiple of two; its duration helpers use nominal two-second blocks, not exact wall-clock expiration. Read the actual `expiresAt` deadline from chain state.
+
+A changed existing record replaces payload, MIME and attributes by combining `set` with `unset` for omitted old attributes. **Its existing deadline stays unchanged by default.** Set `extendOnUpdate: true` on the mapper result or `SinkRecord` to include Lifetime Extension in the same atomic batch. The extension targets at least the old observed deadline plus one block and the requested minimum lifetime. It never intentionally shortens expiry; concurrent external changes can cause rejection and require reconciliation.
+
+## Reading the derived view
+
+```typescript
+import { createArkivReader, quoteValue } from 'arkiv-sync'
+import type { Hex } from 'arkiv-sync'
+
+export async function transferRows(owner: Hex, syncId: string) {
+  const reader = createArkivReader()
+  return reader.queryAll(`sync = ${quoteValue(syncId)}`, {
+    owner, limit: 200, maxResults: 1000, sortBy: 'block', sortDir: 'desc',
+  })
+}
 ```
-src/
-  index.ts            public API
-  config.ts           defineConfig · createIndexer · quickCheck
-  types.ts            SourceAdapter · Sink · Cursor · EventMapper …
-  time.ts log.ts util.ts
-  source/  chains.ts · rpcPool.ts · evmSource.ts   (read side, per-chain adapter)
-  sink/    arkivSink.ts · arkivQuery.ts · predicate.ts   (write side, swappable)
-  core/    indexer.ts · cursor.ts · reorg.ts   (the worker)
-  bin/cli.ts          `npm start` entrypoint
-arkiv.config.ts       demo config (WETH Transfers on Sepolia)
-scripts/smoke.ts      live end-to-end smoke (via quickCheck)
-test/run.ts           unit tests (dedup · resume · reorg) — no network
-skill/                SKILL.md + skill-lock.json (agentskills.io)
-create-arkiv-sync/    the `npm create` scaffolder + template/
+
+Pass the sink's chain and transport/RPC to the reader when using another network. Reads are public; owner scoping identifies the current writer, not an app-user authorization boundary. Internal sink queries use typed expressions and owner/sync scopes. Public raw predicates must use SDK 0.8 typed literals (`str('...')`, `u64(...)`, `addr(...)`) and `AND`/`OR`; `quoteValue` and scope validation conservatively refuse quotes/backslashes/comment tokens supplied as values.
+
+`query()` returns one page and sorts only that page. `queryPage()` also returns the cursor and snapshot block. Reuse a cursor with its original block/query/projection/page size. `queryAll()` reads a fresh head unless you supply `atBlock`, pins that block, walks every page within `maxResults`, and sorts the complete bounded collection client-side. Sink scans and source head checks also bypass viem's block-number cache, so an immediate repeat can observe a confirmed write. Cursor, repeated-cursor, snapshot and bound failures return no partial collection.
+
+DTOs retain `key`, owner, creator, data, `expiresAtBlock` and `attributeTypes`. Big integer attributes are decimal strings; i32 numbers and booleans retain their types. Decimal sorting avoids unsafe Number conversion. There is no server-side `orderBy` or global aggregate API here.
+
+## Recovery and spend
+
+- Event identity is source `chainId:transactionHash:logIndex`; full sha256 covers normalized typed attributes, JSON payload, MIME and lifetime/update policy.
+- One instance serializes its writes. Other processes/wallet users need shared coordination or exclusive custody; a process-local queue cannot reserve their nonces.
+- `executeBatch` supports creates, patches, deletions and explicit extensions. `batchSize` is a configurable package policy, not a verified 1,000-operation protocol limit. Choose it from exact encoded size, gas estimates, provider limits and approved spend.
+- Source checkpoints advance after successful processing. Reorg recovery re-derives canonical source logs and reconciles only current owner/sync-scoped derived entities. A bounded scan must complete before deletions are admitted.
+- `maxEventsPerTick` stops between completed source fetch chunks. One dense chunk/block can exceed the threshold; checkpoints keep whole fetched blocks so no logs are dropped. It is not a hard memory bound.
+- `WriteReconciliationRequiredError` preserves a known `txHash` and stops the worker and later sink writes. A missing hash still means the outcome may be unknown. Reconcile sender/native input/receipt/rows before restarting; the sink does not persist a transaction journal or automatically authorize another send.
+- Use durable per-write callbacks/journals in the consumer for crash recovery. Callback failure after a successful write also stops with its known hash. SDK event-decoding failure does not mean the write failed.
+- `spendReport()` is a balance delta and can include unrelated transfers. Actual receipts and `gasUsed × effectiveGasPrice` establish transaction fees; no historical Braga throughput or per-event cost applies to current networks.
+
+Entity Expiration/deletion remove live query state; they do not retract previously downloaded copies or establish an archive policy. Store only intended public data or independently encrypted payloads.
+
+## Scaffold
+
+Build and pack the local candidate, then run:
+
+```sh
+node create-arkiv-sync/index.mjs my-indexer --local /absolute/path/arkiv-sync-0.3.0.tgz
 ```
 
-Scripts: `npm start` · `npm run smoke` · `npm test` · `npm run typecheck` · `npm run build`.
-
-## Verification (honest status)
-
-Verified on this machine (Node 22.22.3), **2026-06-15**:
-
-- ✅ `npm run typecheck` — 0 errors.
-- ✅ `npm test` — 19/19 (time helpers, idempotency/dedup, restart-resume, reorg detection + re-derivation + per-sync reconcile + deep-reorg, events-per-tick cap, config-fingerprint refusal, **quote-aware predicate-injection rejection, file-cursor fingerprint round-trip, sink chain policy, fromBlock>head guard, addr/uint coercers + secret scrubbing**).
-- ✅ `npm run smoke` — **live** Sepolia → Arkiv (Braga) → query, real transactions on the burner wallet (`0x6A79…E274`), cost ~1–3 ×10⁻⁸ GLM/event.
-- ✅ **Template final smoke** — `create-arkiv-sync` → `npm install` (packaged tarball) → `npm run verify` indexed a live Sepolia block into Braga and queried it back from the installed package.
-- ✅ **Published + hosted** — `arkiv-sync@0.1.0` + `create-arkiv-sync@0.1.0` live on npm (2026-06-15), so `npm create arkiv-sync@latest` works end-to-end. Hosted demo at https://arkiv-indexer.vercel.app (`web-demo/` — bounded serverless that **dogfoods the published package**; verified live: read Sepolia → write Braga → query back).
-
-### Load & limits (stress-tested by 3 models)
-
-Hardcoded guards (so a busy contract can't crash or wedge the worker):
-- **`maxEventsPerTick`** (default 2000) bounds memory by event COUNT — a dense tick shrinks its block range instead of loading everything → no OOM.
-- **Config-fingerprint refusal** — the worker won't reuse a cursor built for a different contract/events/chain (which would silently mix data); it errors with how to fix.
-- **Min poll interval** (≥1s, so a `0` can't hot-loop), **consecutive-failure cap** (stops cleanly instead of an invisible infinite-retry on a dead RPC / unsplittable dense block), **lag warning** (`lagBlocks` — backpressure is now visible), **bulk existence lookup** (one paged query per tick, not N — avoids 429s), **batched deletes**, **429-vs-range classification**, **header caching** across ticks.
-
-Not verified / known limits:
-- **Write throughput** — `mutateEntities` is a batch write: **up to 1000 entity operations per tx** (a hard Arkiv protocol cap — measured on Braga; >1000 is rejected, so `batchSize` is clamped to 1000). One wallet (single nonce) lands ~1 such tx per ~2s block, so the per-wallet rate is `batchSize / blockTime`: the conservative default `batchSize: 50` → ~25 ev/s, but **raising it toward 1000 gives ~150–500 ev/s from a single wallet** (gas is NOT the bottleneck: a 1000-entity tx costs only ~55–93k gas total — ~55–93 gas/entity amortized, measured on Braga 2026-06-16 [a fixed ~22k tx base + tens of gas per extra entity], i.e. <0.16% of a 60M-gas block, so the chain-level ceiling is in the hundreds of thousands of ev/s; the binding per-wallet limit is the 1000-op cap × ~2s block cadence, not gas). Bigger batches = bigger atomic blast radius on a failed tx, so tune `batchSize` to taste. **For almost every contract, a single wallet with a tuned `batchSize` is plenty.**
-  - **Beyond a single wallet** (sustained >~500 ev/s, or fault isolation): a **multi-wallet pool** — N funded wallets = N parallel nonce lanes, each event assigned by `hash(eventId) % N` (keeps idempotency + reorg reconciliation correct; reads then scope across the N owner addresses). Designed, not built in v1.
-- A **single block** with more matching logs than an RPC will serve **can't be paginated below one block** — the worker fails with an actionable message (use a dedicated/archive RPC); per-block log pagination is a follow-up.
-- Reorgs **deeper than `reorgWindow`** (default `confirmations + 6`) can leave orphans below the recorded window until they expire — set `confirmations` above your chain's realistic reorg depth (the default is safe for Sepolia).
-- Idempotency assumes the Arkiv query index is consistent shortly after a write (it is, post-confirmation); a crash *mid-tick* plus query lag is the only theoretical double-write window.
-- Multichain beyond Sepolia is designed-for but not yet exercised on another chain.
-
-## Security
-
-- The private key signs **locally** (viem), is **never logged** (every log line is scrubbed of key-shaped strings), and **never** appears in the repo (`.env` is gitignored).
-- **Testnet-only by allowlist** (default-deny): writes are refused on any chain id that isn't Braga unless explicitly opted in via `ARKIV_ALLOW_CHAIN_ID` (still testnet only). Never mainnet.
-- The Arkiv store is **public/shared**, so every read is **owner-scoped and injection-safe** (owner clause first, address validated, values rejected if they contain quotes/comment tokens).
-
-Built by Santiago (Arkiv DevRel). MIT.
+The generated consumer includes `AGENTS.md` and its `CLAUDE.md` pointer. After a compatible release is actually published, `npm create arkiv-sync@latest` can consume it. Local tarball tests do not establish npm availability.

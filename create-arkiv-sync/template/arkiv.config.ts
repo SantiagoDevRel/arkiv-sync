@@ -19,7 +19,7 @@ export default defineConfig({
   },
   ttlSeconds: days(30),
   map: (e: NormalizedEvent) => ({
-    // `attributes` become queryable fields. Values are string|number (coerce bigint with String()).
+    // `attributes` become queryable fields. Values use SDK0.8 scalars/tags; camelCase names map to snake_case.
     attributes: {
       from: String(e.args.from).toLowerCase(),
       to: String(e.args.to).toLowerCase(),

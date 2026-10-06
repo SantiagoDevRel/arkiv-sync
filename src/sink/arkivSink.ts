@@ -1,527 +1,304 @@
 import { createHash } from 'node:crypto'
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  type Attribute,
-  type MutateEntitiesParameters,
-  type QueryOptions,
-} from '@arkiv-network/sdk'
-import { privateKeyToAccount } from '@arkiv-network/sdk/accounts'
-import { braga } from '@arkiv-network/sdk/chains'
-import { jsonToPayload, formatEther } from '@arkiv-network/sdk/utils'
-import type { Chain } from 'viem'
+import { createPublicClient, createWalletClient, ExpirationTime, EntityMutationError, type ExecuteBatchParameters, type PublicArkivClient, type WalletArkivClient } from '@arkiv-network/sdk'
+import { privateKeyToAccount } from 'viem/accounts'
+import { tiramisu } from '@arkiv-network/sdk/chains'
+import { jsonToPayload } from '@arkiv-network/sdk/utils'
+import { addr, str, u64, type ArkivValue, type Attributes } from '@arkiv-network/sdk/attr'
+import { and, eq, gte, lte, type Expression } from '@arkiv-network/sdk/query'
+import { formatEther, http, type Account, type Chain, type Transport } from 'viem'
 import type { Hex, Logger, Sink, SinkRecord, WriteProgress, WriteResult } from '../types.js'
 import { bigintReplacer, stableStringify, short, scrubSecrets } from '../util.js'
-import { quoteValue, scopeToOwner } from './predicate.js'
+import { normalizeAttributes, storageAttributeName } from './attributes.js'
+import { WriteReconciliationRequiredError } from './errors.js'
 
-const BATCH_SIZE = 50 // entities per mutateEntities transaction (default; tunable up to MAX_OPS_PER_TX)
-const MAX_OPS_PER_TX = 1000 // Arkiv hard cap: a mutateEntities tx with >1000 operations is rejected (measured on Braga)
-const FIND_CONCURRENCY = 8 // parallel existence checks
-
-/**
- * The Arkiv network the SINK writes to. Braga (testnet) today; this seam is what makes the eventual
- * Arkiv-mainnet switch a CONFIG change (pass a different ArkivNetwork) rather than a code edit — the
- * chain object drives signing (EIP-155 chainId), the explorer/faucet are derived from it, and
- * `isTestnet` gates the safety rails. Decoupled from the SOURCE chain entirely.
- */
 export interface ArkivNetwork {
-  /** viem/Arkiv chain object — drives the signed chainId. */
   chain: Chain
-  /** Human label (also the sink `name`). */
   name: string
-  /** A testnet? Writing to a NON-testnet network requires an explicit allowMainnet opt-in. */
   isTestnet: boolean
-  /** Explorer base URL for tx links. */
-  explorerUrl: string
-  /** Faucet URL (testnets only). */
+  explorerUrl?: string
   faucetUrl?: string
 }
-
-/** Default sink network: Braga testnet. */
-export const BRAGA_NETWORK: ArkivNetwork = {
-  chain: braga as unknown as Chain,
-  name: 'arkiv:braga',
-  isTestnet: true,
-  explorerUrl: 'https://explorer.braga.hoodi.arkiv.network',
-  faucetUrl: 'https://braga.hoodi.arkiv.network/faucet/',
+/** SDK0.8.1 chain; explorer from Arkiv's Tiramisu network documentation. */
+export const TIRAMISU_NETWORK: ArkivNetwork = {
+  chain: tiramisu, name: 'arkiv:tiramisu', isTestnet: true,
+  explorerUrl: 'https://tiramisu.explorer.arkiv.network',
 }
-
-/** Well-known EVM mainnet chain ids — NEVER a valid Arkiv sink, even with allowMainnet (defense
- *  against pointing the writer at Ethereum/Base/BSC/etc. by misconfig). */
-const KNOWN_MAINNETS = new Set([
-  1, 10, 25, 56, 100, 137, 204, 250, 324, 1101, 1284, 5000, 8453, 34443, 42161, 42220, 43114, 59144, 81457,
-  534352, 7777777, 1313161554,
-])
+const KNOWN_MAINNETS = new Set([1, 10, 25, 56, 100, 137, 204, 250, 324, 1101, 1284, 5000, 8453, 34443, 42161, 42220, 43114, 59144, 81457, 534352, 7777777, 1313161554])
 
 export interface ArkivSinkOptions {
-  /** A 0x + 64-hex private key (from .env). Signs locally; never leaves the machine. On a testnet
-   *  network this MUST be a throwaway burner. */
-  privateKey: string
-  /** Override the network RPC. Default = the SDK's default for the configured network. */
+  /** Supply exactly one local key or caller-owned account. Never put a key in chat/logs. */
+  privateKey?: string
+  account?: Account
   rpcUrl?: string
+  /** Optional custom transport, including a caller's authenticated server transport. */
+  transport?: Transport
   logger: Logger
-  /** Arkiv network to write to. Default: Braga testnet. */
   network?: ArkivNetwork
-  /** Explicitly allow writing to a NON-testnet Arkiv network (REAL funds at risk). Also settable via
-   *  ARKIV_ALLOW_MAINNET=1. Default false. A known EVM mainnet id is refused regardless. */
   allowMainnet?: boolean
-  /** Entities per mutateEntities transaction. Default 50; **clamped to 1000** (Arkiv rejects a tx with
-   *  >1000 operations). Larger = higher throughput per wallet (≈ batchSize/blockTime) but a bigger
-   *  atomic blast radius if the tx fails. ~150–500 ev/s per wallet at batchSize 1000. */
+  /** Records per batch, package policy rather than a protocol cap. Default50. */
   batchSize?: number
+  /** Maximum rows scanned before reconciliation aborts without deleting. Default10000. */
+  maxScanRows?: number
 }
 
-/**
- * Decide whether the sink may sign on `actualChainId`, given the configured network + opt-in. Pure +
- * exported so the policy is unit-testable. Fail-closed with an actionable message.
- */
 export function assertWritableChain(actualChainId: number, network: ArkivNetwork, allowMainnet: boolean): void {
-  if (KNOWN_MAINNETS.has(actualChainId)) {
-    throw new Error(
-      `chainId ${actualChainId} is a known EVM mainnet — Arkiv Sync never signs there. The sink must ` +
-        `be an Arkiv network (Braga testnet by default).`,
-    )
-  }
-  if (actualChainId !== network.chain.id) {
-    throw new Error(
-      `The Arkiv RPC reports chainId ${actualChainId}, but the configured network "${network.name}" is ` +
-        `chainId ${network.chain.id}. Point ARKIV_RPC_URL at the right network, or pass the matching \`network\`.`,
-    )
-  }
-  if (!network.isTestnet && !allowMainnet) {
-    throw new Error(
-      `Refusing to write to non-testnet Arkiv network "${network.name}" (chainId ${network.chain.id}) without ` +
-        `an explicit opt-in. Set allowMainnet: true (or ARKIV_ALLOW_MAINNET=1) — REAL funds at risk.`,
-    )
-  }
+  if (KNOWN_MAINNETS.has(actualChainId)) throw new Error(`chainId ${actualChainId} is a known EVM mainnet; Arkiv Sync never signs there.`)
+  if (actualChainId !== network.chain.id) throw new Error(`RPC chainId ${actualChainId} does not match configured network "${network.name}" (${network.chain.id}).`)
+  if (!network.isTestnet && !allowMainnet) throw new Error(`Refusing non-testnet Arkiv network "${network.name}" without allowMainnet: true.`)
 }
-
+function positivePolicy(value: number | undefined, fallback: number, name: string): number {
+  if (value === undefined) return fallback
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive safe integer.`)
+  return value
+}
 function normalizeKey(raw: string): Hex {
-  const k = raw.trim()
-  const withPrefix = k.startsWith('0x') ? k : `0x${k}`
-  if (!/^0x[0-9a-fA-F]{64}$/.test(withPrefix)) {
-    // Never echo the value — it's a private key.
-    throw new Error(
-      'PRIVATE_KEY must be a 32-byte hex key (64 hex chars, optional 0x prefix). ' +
-        'Use a THROWAWAY testnet key funded at the Braga faucet.',
-    )
-  }
-  return withPrefix as Hex
+  const value = raw.trim()
+  const key = value.startsWith('0x') ? value : `0x${value}`
+  if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error('PRIVATE_KEY must be32-byte hex. Configure a locally held throwaway testnet key.')
+  return key as Hex
 }
+type Existing = { key: Hex; contentHash?: string; attributes: Attributes; expiresAt: bigint }
+type Prepared = { record: SinkRecord; contentHash: string; attributes: Readonly<Record<string, ArkivValue>>; payload: Uint8Array; contentType: string; expires: ReturnType<typeof ExpirationTime.fromSeconds> }
 
-async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T, i: number) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length)
-  let next = 0
-  const worker = async () => {
-    for (;;) {
-      const i = next++
-      if (i >= items.length) return
-      out[i] = await fn(items[i]!, i)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return out
-}
-
-/**
- * Arkiv (Braga) sink. Writes each event as one Arkiv entity. Key properties:
- *   - Local signing: viem `privateKeyToAccount` — the key never leaves the machine.
- *   - Testnet-only guard: default-deny allowlist (Braga + ARKIV_ALLOW_CHAIN_ID); never mainnet.
- *   - Balance preflight: a friendly faucet message instead of a cryptic "insufficient funds".
- *   - Idempotent upsert keyed by `eventId`, ALWAYS owner-scoped + injection-safe (shared store).
- *   - Update is full-replace: we send the COMPLETE record every time, so replace is correct.
- *   - Batched writes (mutateEntities) + reorg reconciliation by block-range query.
- */
+/** Source EVM logs -> mutable Arkiv derived entities. One instance has one exclusive writer queue. */
 export class ArkivSink implements Sink {
   readonly name: string
+  readonly identity: string
   private readonly network: ArkivNetwork
   private readonly allowMainnet: boolean
   private readonly batchSize: number
-  private readonly pub: ReturnType<typeof createPublicClient>
-  private readonly wallet: ReturnType<typeof createWalletClient>
-  private readonly account: ReturnType<typeof privateKeyToAccount>
+  private readonly maxScanRows: number
+  private readonly pub: PublicArkivClient
+  private readonly wallet: WalletArkivClient
+  private readonly account: Account
   private readonly log: Logger
   private writes = 0
   private startBalance = 0n
   private writeChain: Promise<unknown> = Promise.resolve()
+  private initialized = false
+  private blocked?: WriteReconciliationRequiredError
 
   constructor(opts: ArkivSinkOptions) {
-    const key = normalizeKey(opts.privateKey)
+    if (Boolean(opts.account) === Boolean(opts.privateKey)) throw new Error('Supply exactly one account or privateKey.')
+    this.account = opts.account ?? privateKeyToAccount(normalizeKey(opts.privateKey!))
     this.log = opts.logger
-    this.network = opts.network ?? BRAGA_NETWORK
+    this.network = opts.network ?? TIRAMISU_NETWORK
     this.allowMainnet = opts.allowMainnet ?? process.env.ARKIV_ALLOW_MAINNET === '1'
-    // Guard NaN/0/negatives/floats, and CLAMP to Arkiv's 1000-ops-per-tx cap (a larger batch would make
-    // every write tx fail with "number of operations is greater than 1000").
-    const wantedBatch = Number.isInteger(opts.batchSize) && (opts.batchSize as number) > 0 ? (opts.batchSize as number) : BATCH_SIZE
-    this.batchSize = Math.min(wantedBatch, MAX_OPS_PER_TX)
+    this.batchSize = positivePolicy(opts.batchSize, 50, 'batchSize')
+    this.maxScanRows = positivePolicy(opts.maxScanRows, 10_000, 'maxScanRows')
     this.name = this.network.name
-    this.account = privateKeyToAccount(key)
-    const transport = http(opts.rpcUrl) // undefined → SDK uses the network's default RPC
+    this.identity = `arkiv:${this.network.chain.id}:${this.account.address.toLowerCase()}:storage3`
+    const transport = opts.transport ?? http(opts.rpcUrl, { retryCount: 0, fetchOptions: { cache: 'no-store' } })
     this.pub = createPublicClient({ chain: this.network.chain, transport })
     this.wallet = createWalletClient({ chain: this.network.chain, account: this.account, transport })
   }
-
-  get address(): Hex {
-    return this.account.address as Hex
-  }
-
-  /**
-   * Serialize every signed write through one queue. The wallet has a single nonce; concurrent
-   * createEntity/updateEntity/mutateEntities calls would otherwise collide on it. Reads are not
-   * serialized.
-   */
+  get address(): Hex { return this.account.address }
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.writeChain.then(fn, fn)
-    this.writeChain = run.then(
-      () => undefined,
-      () => undefined,
-    )
-    return run
+    const result = this.writeChain.then(fn, fn)
+    this.writeChain = result.then(() => undefined, () => undefined)
+    return result
   }
-
   async init(): Promise<void> {
-    // Verify the RPC serves the CONFIGURED Arkiv network BEFORE signing anything — never an EVM
-    // mainnet, never a non-testnet network without an explicit opt-in, and the chainId must match.
-    let chainId: number
-    try {
-      chainId = await this.pub.getChainId()
-    } catch (err) {
-      throw new Error(`Couldn't reach the Arkiv RPC for "${this.network.name}". (${scrubSecrets((err as Error).message)})`)
-    }
-    assertWritableChain(chainId, this.network, this.allowMainnet)
-    if (!this.network.isTestnet) {
-      this.log.warn(`⚠ writing to NON-TESTNET Arkiv network "${this.network.name}" (chainId ${chainId}) — REAL funds at risk.`)
-    }
-
-    const balance = await this.pub.getBalance({ address: this.account.address })
-    this.startBalance = balance
-    if (balance === 0n) {
-      const fund = this.network.faucetUrl
-        ? `\n  → Fund this address at the faucet: ${this.network.faucetUrl}`
-        : `\n  → Fund this address with the network's gas token.`
-      throw new Error(
-        `Wallet ${this.address} has 0 balance on ${this.network.name}, so it can't write.${fund}\n` +
-          `  → Then run the command again.${this.network.isTestnet ? ' (This key is a throwaway testnet burner.)' : ''}`,
-      )
-    }
-    const glm = Number(formatEther(balance))
-    if (glm < 0.01 && this.network.faucetUrl) {
-      this.log.warn(
-        `wallet ${short(this.address)} balance is low (${glm}). Top up at ${this.network.faucetUrl} if writes start failing.`,
-      )
-    }
-    this.log.info(`sink ready: ${this.name}, wallet ${short(this.address)}, balance ${glm}`)
+    if (this.blocked) throw this.blocked
+    assertWritableChain(await this.pub.getChainId(), this.network, this.allowMainnet)
+    if (this.initialized) return
+    this.startBalance = await this.pub.getBalance({ address: this.address })
+    if (this.startBalance === 0n) throw new Error(`Wallet ${short(this.address)} has0 balance on ${this.name}; fund it with the network gas token.`)
+    this.initialized = true
+    this.log.info(`sink ready: ${this.name}, wallet ${short(this.address)}`)
   }
-
-  /** Find OUR entity (owner-scoped, injection-safe) carrying this eventId. */
-  private async findByEventId(
-    eventIdValue: string,
-  ): Promise<{ key: Hex; contentHash: string | undefined } | null> {
-    const predicate = scopeToOwner(`eventId = ${quoteValue(eventIdValue)}`, this.account.address)
-    const options: QueryOptions = {
-      includeData: { attributes: true, metadata: false, payload: false },
-      resultsPerPage: 1,
-    }
-    const res = await this.pub.query(predicate, options)
-    const entity = res.entities[0]
-    if (!entity) return null
-    const attrs = (entity.attributes ?? []) as Attribute[]
-    const contentHash = attrs.find((a) => a.key === 'contentHash')?.value
-    return {
-      key: entity.key as Hex,
-      contentHash: contentHash != null ? String(contentHash) : undefined,
-    }
-  }
-
-  /** ONE paged lookup of OUR existing entities for a sync + block range → Map<eventId,{key,contentHash}>.
-   *  Returns null (caller falls back to bounded per-event lookups) when the range holds FAR more
-   *  entities than this batch, so a polluted/dense same-sync range can't blow up memory with an
-   *  unbounded scan. */
-  private async findExistingByRange(
-    sync: string,
-    fromBlock: number,
-    toBlock: number,
-    maxRows: number,
-  ): Promise<Map<string, { key: Hex; contentHash?: string }> | null> {
-    const predicate = scopeToOwner(
-      `sync = ${quoteValue(sync)} && block >= ${fromBlock} && block <= ${toBlock}`,
-      this.account.address,
-    )
-    const map = new Map<string, { key: Hex; contentHash?: string }>()
+  private owner(): Expression { return eq('$owner', addr(this.address)) }
+  private async scan(predicate: Expression, maxRows: number): Promise<Existing[]> {
+    const atBlock = await this.pub.getBlockNumber({ cacheTime: 0 })
+    const rows: Existing[] = []
     let cursor: string | undefined
-    let scanned = 0
+    const seen = new Set<string>()
     do {
-      const res = await this.pub.query(predicate, {
-        includeData: { attributes: true, metadata: false, payload: false },
-        resultsPerPage: 200,
-        cursor,
-      })
-      scanned += res.entities.length
-      if (scanned > maxRows) return null // range far larger than the batch → bail to per-event (bounded memory)
-      for (const e of res.entities) {
-        const attrs = (e.attributes ?? []) as Attribute[]
-        const eid = attrs.find((a) => a.key === 'eventId')?.value
-        const ch = attrs.find((a) => a.key === 'contentHash')?.value
-        if (eid != null) {
-          map.set(String(eid), { key: e.key as Hex, contentHash: ch != null ? String(ch) : undefined })
-        }
+      const page = await this.pub.query(predicate, { atBlock, cursor, limit: 200,
+        select: { key: true, owner: true, attributes: true, expiresAt: true } })
+      if (page.blockNumber !== atBlock) throw new Error('RPC returned a different snapshot block.')
+      for (const entity of page.entities) {
+        if (!entity.key || !entity.attributes || entity.expiresAt === undefined || entity.owner?.toLowerCase() !== this.address.toLowerCase()) throw new Error('Incomplete or out-of-owner scoped query result.')
+        rows.push({ key: entity.key, attributes: entity.attributes, expiresAt: entity.expiresAt,
+          contentHash: entity.attributes.content_hash?.type === 'str' ? entity.attributes.content_hash.value : undefined })
+        if (rows.length > maxRows) throw new Error(`Scoped query exceeded maxScanRows ${maxRows}; no partial reconciliation is allowed.`)
       }
-      cursor = res.cursor
+      cursor = page.cursor
+      if (cursor) {
+        if (seen.has(cursor)) throw new Error('RPC repeated a pagination cursor.')
+        seen.add(cursor)
+      }
     } while (cursor)
-    return map
+    return rows
   }
-
-  private prepare(record: SinkRecord) {
+  private async findByEventId(id: string, scope: Record<string,string|number> = {}): Promise<Existing | undefined> {
+    const predicates = [this.owner(), eq('event_id', str(id))]
+    for (const [name,value] of Object.entries(scope)) predicates.push(eq(storageAttributeName(name), value))
+    const rows = await this.scan(and(predicates), 2)
+    if (rows.length > 1) throw new Error('Duplicate event_id in owner scope requires manual reconciliation.')
+    return rows[0]
+  }
+  private prepare(record: SinkRecord): Prepared {
+    const expires = ExpirationTime.fromSeconds(record.expiresInSeconds)
+    const normalized = normalizeAttributes(record.attributes)
+    const suppliedId = normalized.event_id
+    if (suppliedId && (suppliedId.type !== 'str' || suppliedId.value !== record.eventId)) throw new Error('event_id attribute does not match record.eventId.')
+    const payloadJson = toJsonObject(record.payload)
     const contentType = record.contentType ?? 'application/json'
-    const expiresIn = record.expiresInSeconds
-    if (!Number.isInteger(expiresIn) || expiresIn < 2) {
-      throw new Error(
-        `expiresInSeconds must be an integer >= 2 (Arkiv TTL is in SECONDS, ~2s block granularity). ` +
-          `Got ${expiresIn}. Use the time helpers: days()/hours()/minutes(), never milliseconds.`,
-      )
-    }
-    // Normalize ONCE, then hash + serialize the SAME object — so the content hash always reflects the
-    // exact bytes stored (no representation drift that could skip a real change as a no-op).
-    const jsonPayload = toJsonObject(record.payload)
-    const contentHash = hashContent(record.attributes, jsonPayload, contentType, expiresIn)
-    const attributes: Attribute[] = [...record.attributes, { key: 'contentHash', value: contentHash }]
-    const payload = jsonToPayload(jsonPayload)
-    return { contentHash, attributes, payload, contentType, expiresIn }
+    const attributes = { ...normalized, event_id: str(record.eventId) }
+    const contentHash = createHash('sha256').update(stableStringify({ contentType,
+      expiresInSeconds: record.expiresInSeconds, extendOnUpdate: record.extendOnUpdate ?? false,
+      attributes, payload: payloadJson })).digest('hex')
+    return { record, contentHash, payload: jsonToPayload(payloadJson), contentType, expires,
+      attributes: { ...attributes, content_hash: str(contentHash) } }
   }
-
-  /**
-   * Single-record write (create-or-skip-or-update). This is the FALLBACK path — the indexer hot path
-   * calls writeBatch(), which packs many records into one `mutateEntities` tx (up to 1000 ops). Never
-   * loop write() over a set you already have: that is one signed tx + one nonce round-trip PER record.
-   */
+  private replacement(prepared: Prepared, existing: Existing): NonNullable<ExecuteBatchParameters['patches']> {
+    return [{ entityKey: existing.key, set: prepared.attributes,
+      unset: Object.keys(existing.attributes).filter(name => !Object.hasOwn(prepared.attributes, name)),
+      payload: prepared.payload, contentType: prepared.contentType }]
+  }
+  private async submit(params: ExecuteBatchParameters) {
+    await this.init() // Recheck actual chain before every admitted wallet call.
+    try { return await this.wallet.executeBatch(params) }
+    catch (cause) {
+      this.blocked = new WriteReconciliationRequiredError('Arkiv write requires reconciliation; automatic resubmission is stopped.',
+        { cause, txHash: cause instanceof EntityMutationError ? cause.txHash : undefined })
+      throw this.blocked
+    }
+  }
   async write(record: SinkRecord, onWritten?: WriteProgress): Promise<WriteResult> {
-    const { contentHash, attributes, payload, contentType, expiresIn } = this.prepare(record)
-    return this.runExclusive(async () => {
-      const existing = await this.findByEventId(record.eventId)
-      let res: WriteResult
-      if (existing) {
-        if (existing.contentHash === contentHash) {
-          res = { op: 'skip', key: existing.key }
-        } else {
-          // Arkiv update = full-replace; we pass the COMPLETE new state, so replace is correct.
-          const r = await this.wallet.updateEntity({ entityKey: existing.key, payload, contentType, attributes, expiresIn })
-          this.writes++
-          res = { op: 'update', key: r.entityKey as string, txHash: r.txHash as string }
+    return (await this.writeBatch([record], onWritten))[0]!
+  }
+  async writeBatch(records: SinkRecord[], onWritten?: WriteProgress): Promise<WriteResult[]> {
+    if (!records.length) return []
+    const byId = new Map(records.map(record => [record.eventId, record]))
+    const prepared = [...byId.values()].map(record => this.prepare(record))
+    const outcomes = new Map<string, WriteResult>()
+    await this.runExclusive(async () => {
+      if (this.blocked) throw this.blocked
+      await this.init()
+      const existing = new Map<string, Existing>()
+      const firstSync = prepared[0]!.attributes.sync
+      const scoped = firstSync?.type === 'str' && prepared.every(p => p.attributes.sync?.type === 'str' && p.attributes.sync.value === firstSync.value && p.attributes.block?.type === 'u64')
+      if (scoped) {
+        const blocks = prepared.map(p => (p.attributes.block as ReturnType<typeof u64>).value)
+        const lo = blocks.reduce((a,b) => a < b ? a : b)
+        const hi = blocks.reduce((a,b) => a > b ? a : b)
+        const rows = await this.scan(and(this.owner(), eq('sync', firstSync), gte('block', u64(lo)), lte('block', u64(hi))), this.maxScanRows)
+        for (const row of rows) {
+          const id = row.attributes.event_id
+          if (id?.type !== 'str') throw new Error('Owned scoped entity lacks a string event_id.')
+          if (existing.has(id.value)) throw new Error('Duplicate event_id in owner/sync scope requires reconciliation.')
+          existing.set(id.value, row)
         }
       } else {
-        const r = await this.wallet.createEntity({ payload, contentType, attributes, expiresIn })
-        this.writes++
-        res = { op: 'create', key: r.entityKey as string, txHash: r.txHash as string }
-      }
-      onWritten?.({ eventId: record.eventId, op: res.op, key: res.key, txHash: res.txHash })
-      return res
-    })
-  }
-
-  /** Batched upsert — the HOT PATH. One `mutateEntities` transaction per chunk of `batchSize` records
-   *  (default 50, clamped to Arkiv's 1000-ops-per-tx cap). Atomic + dedup-safe; the ONLY Arkiv write
-   *  path for 2+ records — one nonce per chunk, never one signed tx per record. */
-  async writeBatch(records: SinkRecord[], onWritten?: WriteProgress): Promise<WriteResult[]> {
-    if (records.length === 0) return []
-
-    // Dedupe within the batch by eventId (last wins) — getLogs is already unique, but a config
-    // watching overlapping addresses/events could surface the same log twice; never plan it as two creates.
-    const byId = new Map<string, SinkRecord>()
-    for (const r of records) byId.set(r.eventId, r)
-    const unique = [...byId.values()]
-    const resultById = new Map<string, WriteResult>()
-
-    // Whole plan (existence checks + partition + all chunks) runs in ONE write-lock critical section,
-    // so two concurrent writeBatch calls can't both classify the same eventId as a create → no dup.
-    await this.runExclusive(async () => {
-      const prepared = unique.map((r) => ({ record: r, ...this.prepare(r) }))
-
-      // Existence lookup. Prefer ONE paged range query (sync + block range) over N per-event queries
-      // — the latter would hammer the RPC (429) on a busy tick. Falls back to per-event finds if the
-      // records don't carry the `sync`/`block` system attributes (e.g. a non-indexer caller).
-      const attrOf = (r: SinkRecord, k: string) => r.attributes.find((a) => a.key === k)?.value
-      const syncId = String(attrOf(unique[0]!, 'sync') ?? '')
-      const sameSync = syncId !== '' && unique.every((r) => String(attrOf(r, 'sync') ?? '') === syncId)
-      const blockNums = unique.map((r) => Number(attrOf(r, 'block')))
-      const allBlocks = blockNums.every((n) => Number.isFinite(n))
-
-      let existingMap: Map<string, { key: Hex; contentHash?: string }> | null = null
-      if (sameSync && allBlocks) {
-        const lo = blockNums.reduce((a, b) => (b < a ? b : a), blockNums[0]!)
-        const hi = blockNums.reduce((a, b) => (b > a ? b : a), blockNums[0]!)
-        // Bound the bulk scan to a few× the batch; a far-larger range returns null → per-event fallback.
-        existingMap = await this.findExistingByRange(syncId, lo, hi, Math.max(unique.length * 3, 2000))
-      }
-      if (!existingMap) {
-        existingMap = new Map()
-        const found = await mapLimit(prepared, FIND_CONCURRENCY, (p) => this.findByEventId(p.record.eventId))
-        prepared.forEach((p, i) => {
-          const f = found[i]
-          if (f) existingMap!.set(p.record.eventId, f)
-        })
-      }
-
-      type Op = { kind: 'create' | 'update'; id: string; params: Record<string, unknown> }
-      const ops: Op[] = []
-      for (const p of prepared) {
-        const ex = existingMap.get(p.record.eventId)
-        if (ex) {
-          if (ex.contentHash === p.contentHash) {
-            resultById.set(p.record.eventId, { op: 'skip', key: ex.key })
-            onWritten?.({ eventId: p.record.eventId, op: 'skip', key: ex.key })
-          } else {
-            ops.push({ kind: 'update', id: p.record.eventId, params: { entityKey: ex.key, payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
-          }
-        } else {
-          ops.push({ kind: 'create', id: p.record.eventId, params: { payload: p.payload, contentType: p.contentType, expiresIn: p.expiresIn, attributes: p.attributes } })
+        for (const p of prepared) {
+          const sync = p.attributes.sync
+          const found = await this.findByEventId(p.record.eventId, sync?.type === 'str' ? {sync:sync.value} : undefined)
+          if (found) existing.set(p.record.eventId, found)
         }
       }
-
-      for (let start = 0; start < ops.length; start += this.batchSize) {
-        const chunk = ops.slice(start, start + this.batchSize)
-        const params: MutateEntitiesParameters = {}
-        const cc = chunk.filter((o) => o.kind === 'create')
-        const cu = chunk.filter((o) => o.kind === 'update')
-        if (cc.length) params.creates = cc.map((o) => o.params as never)
-        if (cu.length) params.updates = cu.map((o) => o.params as never)
-        const r = (await this.wallet.mutateEntities(params)) as {
-          txHash?: string
-          createdEntities?: Hex[]
-          updatedEntities?: Hex[]
+      const changed = prepared.filter(p => {
+        const old = existing.get(p.record.eventId)
+        if (old?.contentHash === p.contentHash) {
+          const result: WriteResult = { op: 'skip', key: old.key }
+          outcomes.set(p.record.eventId, result)
+          onWritten?.({ eventId: p.record.eventId, ...result })
+          return false
         }
-        // mutateEntities returns the per-entity keys (createdEntities/updatedEntities, in the order we
-        // passed them), so batched writes surface a REAL `key`, not just the tx hash.
-        const created = r.createdEntities ?? []
-        const updated = r.updatedEntities ?? []
-        let ci = 0
-        let ui = 0
-        this.writes += chunk.length
-        for (const o of chunk) {
-          const key = o.kind === 'create' ? created[ci++] : updated[ui++]
-          resultById.set(o.id, { op: o.kind, key, txHash: r.txHash })
-          onWritten?.({ eventId: o.id, op: o.kind, key, txHash: r.txHash })
-        }
-      }
-    })
-
-    // Align results back to the original input order. Duplicate input positions (same eventId) get
-    // 'skip' so the caller never over-counts a single entity as multiple writes.
-    const seen = new Set<string>()
-    return records.map((r) => {
-      if (seen.has(r.eventId)) return { op: 'skip' as const }
-      seen.add(r.eventId)
-      return resultById.get(r.eventId) ?? { op: 'skip' }
-    })
-  }
-
-  async delete(eventIdValue: string): Promise<void> {
-    // find + delete INSIDE the lock so the read-then-delete is atomic w.r.t. concurrent writes.
-    await this.runExclusive(async () => {
-      const existing = await this.findByEventId(eventIdValue)
-      if (!existing) return
-      await this.wallet.deleteEntity({ entityKey: existing.key })
-    })
-  }
-
-  /**
-   * Reorg reconciliation: delete OUR entities in block range [fromBlock,toBlock] whose eventId is
-   * not in `keep` (the canonical set just re-derived). Works at any reorg depth — it relies on the
-   * `block` attribute + numeric range query, not on in-memory window state. `scope` (e.g.
-   * `{ sync: cursorId }`) narrows deletion to THIS indexer's records, so two indexers sharing one
-   * wallet can't delete each other's entities in an overlapping block range.
-   */
-  async reconcile(
-    fromBlock: bigint,
-    toBlock: bigint,
-    keep: Set<string>,
-    scope?: Record<string, string | number>,
-  ): Promise<number> {
-    let clause = `block >= ${fromBlock} && block <= ${toBlock}`
-    for (const [k, v] of Object.entries(scope ?? {})) {
-      if (!/^[a-zA-Z0-9_]+$/.test(k)) throw new Error(`Invalid scope attribute key "${k}".`)
-      clause += ` && ${k} = ${typeof v === 'number' ? v : quoteValue(String(v))}`
-    }
-    const predicate = scopeToOwner(clause, this.account.address)
-    const stale: Hex[] = []
-    let cursor: string | undefined
-    do {
-      const res = await this.pub.query(predicate, {
-        includeData: { attributes: true, metadata: false, payload: false },
-        resultsPerPage: 100,
-        cursor,
+        return true
       })
-      for (const e of res.entities) {
-        const eid = (e.attributes ?? []).find((a: Attribute) => a.key === 'eventId')?.value
-        if (eid != null && !keep.has(String(eid))) stale.push(e.key as Hex)
+      for (let i=0; i<changed.length; i+=this.batchSize) {
+        const chunk = changed.slice(i,i+this.batchSize)
+        const creates = chunk.filter(p => !existing.has(p.record.eventId))
+        const updates = chunk.filter(p => existing.has(p.record.eventId))
+        const params: ExecuteBatchParameters = {
+          creates: creates.map(p => ({ payload: p.payload, contentType: p.contentType, attributes: p.attributes, expires: p.expires })),
+          patches: updates.flatMap(p => this.replacement(p, existing.get(p.record.eventId)!)),
+        }
+        const extensions: NonNullable<ExecuteBatchParameters['extensions']> = []
+        for (const p of updates) if (p.record.extendOnUpdate) {
+          const old = existing.get(p.record.eventId)!
+          extensions.push({ entityKey: old.key,
+            expires: ExpirationTime.atBlock(old.expiresAt + 1n, { atLeast: p.expires }) })
+        }
+        if (extensions.length) params.extensions = extensions
+        const result = await this.submit(params)
+        if (result.createdEntities.length !== creates.length || result.patchedEntities.length !== updates.length || result.extendedEntities.length !== extensions.length) {
+          this.blocked = new WriteReconciliationRequiredError('Successful batch returned unmatched key counts; preserve txHash and reconcile.', { txHash: result.txHash })
+          throw this.blocked
+        }
+        const expectedUpdates = updates.map(p => existing.get(p.record.eventId)!.key)
+        if (result.patchedEntities.some((key,index) => key !== expectedUpdates[index])) {
+          this.blocked = new WriteReconciliationRequiredError('Successful batch returned unmatched patch identities; reconcile.', { txHash: result.txHash })
+          throw this.blocked
+        }
+        let ci=0,ui=0
+        this.writes += chunk.length
+        for (const p of chunk) {
+          const updating = existing.has(p.record.eventId)
+          const value: WriteResult = { op: updating ? 'update' : 'create', key: updating ? result.patchedEntities[ui++] : result.createdEntities[ci++], txHash: result.txHash }
+          outcomes.set(p.record.eventId, value)
+          try { onWritten?.({ eventId: p.record.eventId, ...value }) }
+          catch (cause) {
+            this.blocked = new WriteReconciliationRequiredError('Write succeeded but progress callback failed; preserve txHash and reconcile.', {cause,txHash:result.txHash})
+            throw this.blocked
+          }
+        }
       }
-      cursor = res.cursor
-    } while (cursor)
-
-    // Batch the deletes — one tx per ~50 entities, not one tx per entity (a big reorg could orphan
-    // thousands; serializing thousands of single-delete txs through one nonce would take forever).
-    for (let i = 0; i < stale.length; i += this.batchSize) {
-      const chunk = stale.slice(i, i + this.batchSize)
-      await this.runExclusive(() =>
-        this.wallet.mutateEntities({ deletes: chunk.map((entityKey) => ({ entityKey })) } as MutateEntitiesParameters),
-      )
-    }
-    if (stale.length) this.log.warn(`reconcile: deleted ${stale.length} orphaned entit(y/ies) in blocks ${fromBlock}-${toBlock}`)
-    return stale.length
+    })
+    const seen = new Set<string>()
+    return records.map(record => {
+      if (seen.has(record.eventId)) return { op: 'skip' }
+      seen.add(record.eventId)
+      return outcomes.get(record.eventId)!
+    })
   }
-
-  /** Live balance — used by the cost/event metric and the smoke. */
-  async balance(): Promise<bigint> {
-    return this.pub.getBalance({ address: this.account.address })
+  async delete(id: string, scope?:Record<string,string|number>): Promise<void> {
+    await this.runExclusive(async () => {
+      if (this.blocked) throw this.blocked
+      const found = await this.findByEventId(id,scope)
+      if (found) await this.submit({ deletes: [{ entityKey: found.key }] })
+    })
   }
-
-  costSummary() {
-    return { writes: this.writes, totalWei: 0n }
+  async reconcile(fromBlock: bigint, toBlock: bigint, keep: Set<string>, scope: Record<string,string|number> = {}): Promise<number> {
+    return this.runExclusive(async () => {
+      if (this.blocked) throw this.blocked
+      const predicates = [this.owner(), gte('block',u64(fromBlock)),lte('block',u64(toBlock))]
+      for (const [key,value] of Object.entries(scope)) predicates.push(eq(storageAttributeName(key), typeof value === 'number' ? value : str(value)))
+      const rows = await this.scan(and(predicates),this.maxScanRows)
+      const stale = rows.filter(row => {
+        const id = row.attributes.event_id
+        if (id?.type !== 'str') throw new Error('Scoped entity lacks event_id; refusing partial deletion.')
+        return !keep.has(id.value)
+      })
+      for (let i=0; i<stale.length; i+=this.batchSize) {
+        const keys = stale.slice(i,i+this.batchSize).map(row => row.key)
+        const result = await this.submit({ deletes:keys.map(entityKey => ({entityKey})) })
+        if (result.deletedEntities.length !== keys.length || result.deletedEntities.some((key,index) => key !== keys[index])) {
+          this.blocked = new WriteReconciliationRequiredError('Successful deletion count/keys mismatch; reconcile.',{txHash:result.txHash})
+          throw this.blocked
+        }
+      }
+      return stale.length
+    })
   }
-
-  /** GLM spent since init + per-write average, for the cost/event metric. */
-  async spendReport(): Promise<{ spentGlm: number; writes: number; perWriteGlm: number }> {
-    const now = await this.balance()
-    // Clamp: if the wallet was topped up mid-run, don't report a negative/garbage spend.
-    const spentWei = this.startBalance > now ? this.startBalance - now : 0n
-    const spentGlm = Number(formatEther(spentWei))
-    const perWriteGlm = this.writes > 0 ? spentGlm / this.writes : 0
-    return { spentGlm, writes: this.writes, perWriteGlm }
+  async balance(): Promise<bigint> { return this.pub.getBalance({ address:this.address }) }
+  costSummary(): undefined { return undefined } // No receipt-fee journal is maintained by this sink.
+  /** Balance delta can include unrelated transfers; receipt accounting is the authoritative cost. */
+  async spendReport() {
+    const balance = await this.balance()
+    const spent = this.startBalance > balance ? this.startBalance-balance : 0n
+    const spentGlm = Number(formatEther(spent))
+    return {spentGlm,writes:this.writes,perWriteGlm:this.writes ? spentGlm/this.writes : 0}
   }
-
-  /** Explorer tx URL for the default (Braga) network. For a custom network use `explorerTxUrl`. */
-  static explorerTx(txHash: string): string {
-    return `${BRAGA_NETWORK.explorerUrl}/tx/${txHash}`
-  }
-
-  /** Explorer tx URL for THIS sink's configured network. */
-  explorerTxUrl(txHash: string): string {
-    return `${this.network.explorerUrl}/tx/${txHash}`
+  static explorerTx(hash:string):string { return `${TIRAMISU_NETWORK.explorerUrl}/tx/${hash}` }
+  explorerTxUrl(hash:string):string {
+    if (!this.network.explorerUrl) throw new Error('Configure the verified network explorer URL.')
+    return `${this.network.explorerUrl}/tx/${hash}`
   }
 }
-
-/**
- * Full, deterministic content fingerprint to detect real changes. Covers EVERYTHING an Arkiv
- * update replaces — payload, attributes (type-preserving via stableStringify, so number 1 ≠ string
- * "1"), contentType, and expiration — so a change to any of them is seen. Full sha256 (no truncation).
- */
-function hashContent(rawAttributes: Attribute[], payloadJson: unknown, contentType: string, expiresIn: number): string {
-  const attributes = rawAttributes
-    .filter((a) => a.key !== 'contentHash')
-    .map((a) => ({ key: a.key, value: a.value }))
-    .sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))
-  // Hash the NORMALIZED payload (toJsonObject output = exactly what gets serialized + stored), not the
-  // raw pre-normalization object — a Date/custom-toJSON value could otherwise hash one way and store
-  // another, so a genuine change would be wrongly skipped as a no-op.
-  const fingerprint = stableStringify({ contentType, expiresIn, attributes, payload: payloadJson })
-  return createHash('sha256').update(fingerprint).digest('hex')
-}
-
-/** Ensure payload is a JSON object/array (jsonToPayload expects one). Wrap primitives. */
-function toJsonObject(payload: unknown): object {
-  if (payload && typeof payload === 'object') {
-    return JSON.parse(JSON.stringify(payload, bigintReplacer))
-  }
-  // Wrap a primitive; coerce a root bigint so JSON.stringify (inside jsonToPayload) never throws.
-  return { value: typeof payload === 'bigint' ? payload.toString() : payload }
+function toJsonObject(payload:unknown):object {
+  if (payload && typeof payload === 'object') return JSON.parse(JSON.stringify(payload,bigintReplacer))
+  return {value:typeof payload === 'bigint' ? payload.toString() : payload}
 }
