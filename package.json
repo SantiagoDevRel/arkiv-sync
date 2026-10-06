@@ -1,7 +1,7 @@
 {
   "name": "arkiv-sync",
   "version": "0.3.0",
-  "description": "Point it at any smart contract on any EVM chain and turn its on-chain events into a queryable Arkiv database — no RPC, reorg, or gas knowledge required.",
+  "description": "Index EVM contract events into Arkiv with configurable sources, checkpointed progress, and reorg recovery.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
