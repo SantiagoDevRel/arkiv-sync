@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "allow": [
+    {
+      "rule": "html-ui",
+      "path": "web-demo/index.html",
+      "reason": "Retain the pre-existing static sample during the explicitly dependency-restricted SDK migration. No new page or framework is introduced; converting it to React would require prohibited new dependencies."
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -87,6 +87,10 @@
   .b-create { background:#173a26; color:var(--green); } .b-update { background:#3a3417; color:var(--yellow); } .b-skip { background:#25262e; color:var(--dim); }
   a.lnk { color:var(--orange); text-decoration:none; font-size:11px; white-space:nowrap; } a.lnk:hover { text-decoration:underline; }
   .empty { color:var(--dim); padding:18px 14px; }
+  @media (max-width:900px) { .metrics { grid-template-columns:repeat(3,1fr); } main { height:auto; min-height:55vh; } }
+  @media (max-width:600px) { main { grid-template-columns:1fr; } .col { min-height:220px; } .f.grow { min-width:0; width:100%; } .bar { gap:10px; } .metric { padding:10px; } }
+  .feed.ark .rowi { grid-template-columns:minmax(70px,auto) 52px minmax(0,1fr) auto auto; }
+  .help,.col .sub { font-size:12px; }
 </style>
 </head>
 <body>
@@ -102,38 +106,38 @@
       <select id="chain" class="ctl"><option value="sepolia">Sepolia</option></select>
     </div>
     <div class="f grow">
-      <label>1 · Contrato</label>
-      <input id="contract" class="ctl" placeholder="0x… dirección del contrato" />
+      <label>1 · Contract</label>
+      <input id="contract" class="ctl" placeholder="0x… contract address" />
     </div>
     <div class="f">
       <label>&nbsp;</label>
-      <button id="loadAbi" class="ctl ghost">🔎 Cargar eventos</button>
+      <button id="loadAbi" class="ctl ghost">Load events</button>
     </div>
     <div class="f grow">
-      <label>2 · Evento (de la ABI)</label>
-      <select id="eventSelect" class="ctl"><option value="">— cargá el contrato primero —</option></select>
+      <label>2 · ABI event</label>
+      <select id="eventSelect" class="ctl"><option value="">— load a contract first —</option></select>
     </div>
   </div>
 
   <div class="bar">
     <div class="f grow">
-      <label>Firma del evento — editable, debe matchear EXACTO al contrato</label>
+      <label>Event signature — match the contract exactly</label>
       <input id="event" class="ctl" value="Transfer(address indexed from, address indexed to, uint256 value)" />
     </div>
     <div class="f">
-      <label>3 · Modo</label>
+      <label>3 · Mode</label>
       <select id="mode" class="ctl">
-        <option value="live">live — eventos nuevos</option>
-        <option value="backfill">backfill — últimos N bloques</option>
+        <option value="live">live — new events</option>
+        <option value="backfill">backfill — recent blocks</option>
       </select>
     </div>
     <div class="f">
-      <label title="Cuántos bloques hacia atrás leer de una (máx 600 en el demo hosteado). Subilo para estresar el worker.">Backfill (#)</label>
+      <label title="Source blocks to scan in a bounded request.">Backfill (#)</label>
       <input id="backfillBlocks" class="ctl" type="number" value="300" />
     </div>
     <div class="f">
       <label>&nbsp;</label>
-      <button id="start" class="ctl primary">▶ Start</button>
+      <button id="start" class="ctl primary" disabled>▶ Start</button>
     </div>
     <div class="f">
       <label>&nbsp;</label>
@@ -141,37 +145,36 @@
     </div>
     <div class="f">
       <label>&nbsp;</label>
-      <button id="queryBtn" class="ctl ghost" title="Consulta read-only las entities ya escritas para este contrato (no firma nada, no gasta) — muestra el verbo titular: consultar.">▣ Consultar lo escrito</button>
+      <button id="queryBtn" class="ctl ghost" title="Read existing Arkiv entities. No signing required.">Query Arkiv entities</button>
     </div>
   </div>
 
-  <div class="samples" id="samples"><span>muestras (Transfer ERC-20):</span></div>
+  <div class="samples" id="samples"><span>Examples (ERC-20 Transfer):</span></div>
   <div class="help">
-    Elegí <b>chain</b> (mainnets son <b>read-only</b>: leer no firma nada; lo escrito va siempre a Arkiv/Braga testnet) →
-    pegá un contrato → <b>Cargar eventos</b> lee su ABI (Sourcify, multichain) → la firma debe matchear exacto (incl. <code>indexed</code>).
-    <b>backfill</b> floodea los últimos N bloques para ver el worker bajo carga.
+    Read EVM events as queryable Arkiv entities on Rabdi. Choose Sepolia WETH to explore seeded data.
+    <span id="write-policy">Checking writer availability…</span>
   </div>
 </header>
 
 <div class="metrics">
-  <div class="metric" title="Último bloque de la chain fuente.">
+  <div class="metric" title="Latest source-chain block.">
     <div class="k">head</div><div class="v" id="m-head">—</div></div>
-  <div class="metric" title="head − confirmaciones (2). El worker solo indexa hasta acá: bloques ya 'firmes' (anti-reorg).">
+  <div class="metric" title="Source head minus configured confirmations.">
     <div class="k">safe head</div><div class="v" id="m-safe">—</div></div>
-  <div class="metric" title="Bloques que el worker va atrás del safe head. 0 = al día. Sube si Arkiv escribe más lento que la emisión.">
-    <div class="k">lag (bloques)</div><div class="v lag-ok" id="m-lag">—</div></div>
-  <div class="metric" title="Eventos detectados en el contrato (panel izquierdo).">
-    <div class="k">eventos leídos</div><div class="v" id="m-events">0</div></div>
-  <div class="metric" title="Entities create/update en Arkiv (panel derecho). 'skip' = ya estaba, no se reescribe.">
-    <div class="k">entities escritas</div><div class="v" id="m-written">0</div></div>
-  <div class="metric" title="Ritmo de escritura a Arkiv (últimos 5s). Techo ~25/s con 1 wallet.">
-    <div class="k">writes/seg</div><div class="v" id="m-rate">0.0</div></div>
+  <div class="metric" title="Source blocks still to process.">
+    <div class="k">lag (blocks)</div><div class="v lag-ok" id="m-lag">—</div></div>
+  <div class="metric" title="Matching source events.">
+    <div class="k">events read</div><div class="v" id="m-events">0</div></div>
+  <div class="metric" title="New or changed Arkiv entities; unchanged entities are skipped.">
+    <div class="k">entities written</div><div class="v" id="m-written">0</div></div>
+  <div class="metric" title="Observed recent write rate.">
+    <div class="k">writes/sec</div><div class="v" id="m-rate">0.0</div></div>
 </div>
 
 <div class="banner" id="banner"></div>
 <div class="writing" id="writing">
   <svg class="amark" viewBox="0 0 388 218" xmlns="http://www.w3.org/2000/svg"><path d="M0 218V0H49.1603V32.9884H32.6204V185.012H49.1603V218H0Z" fill="#FE7446"/><path d="M230.877 181.09L219.62 146.256H168.622L157.136 181.09H122.219V168.171L175.514 19.6085H214.337L267.862 168.171V181.09H230.877ZM194.351 68.9757L179.649 113.037H208.594L194.351 68.9757Z" fill="#FE7446"/><path d="M387.701 0V218H338.54V185.012H355.08V32.9884H338.54V0H387.701Z" fill="#FE7446"/></svg>
-  <span id="writing-text">Escribiendo en Arkiv…</span>
+  <span id="writing-text">Writing Arkiv entities…</span>
   <span class="bar2"><i id="writing-bar"></i></span>
 </div>
 
@@ -179,16 +182,16 @@
   <section class="col">
     <div class="head">
       <h2><span>① Worker · Sepolia source</span><span class="count" id="src-count">0</span></h2>
-      <div class="sub">Lo que el worker LEE del contrato. Columnas: bloque · evento · args.</div>
+      <div class="sub">Confirmed source events: block · event · arguments.</div>
     </div>
-    <div class="feed src" id="src"><div class="empty">Pegá un contrato, cargá eventos, elegí uno y dale Start.</div></div>
+    <div class="feed src" id="src"><div class="empty">Choose a contract and event. Query seeded Arkiv entities below.</div></div>
   </section>
   <section class="col">
     <div class="head">
-      <h2><span>② Writing in Arkiv · Braga</span><span class="count" id="ark-count">0</span></h2>
-      <div class="sub"><b style="color:var(--green)">create</b>=nueva · <b style="color:var(--yellow)">update</b>=cambió · <b style="color:var(--dim)">skip</b>=ya existía. <b style="color:var(--orange)">🔍 ver</b>=la entidad en el Data Explorer · <b style="color:var(--orange)">⛓ tx</b>=la tx on-chain.</div>
+      <h2><span>② Arkiv entities · Rabdi</span><span class="count" id="ark-count">0</span></h2>
+      <div class="sub">Create = new · update = changed · skip = unchanged. Check Entity Expiration in the explorer.</div>
     </div>
-    <div class="feed ark" id="ark"><div class="empty">Acá aparece cada entity escrita en Arkiv, con link para re-chequearla.</div></div>
+    <div class="feed ark" id="ark"><div class="empty">Queried Arkiv entities appear here with explorer links.</div></div>
   </section>
 </main>
 
@@ -198,10 +201,10 @@ const $ = (id) => document.getElementById(id)
 // (e.g. Message(string) carrying <img onerror=...>); unescaped, that is XSS that could call the
 // same-origin demo APIs and abuse the funded writer.
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-const BLOCK_EXPLORER = 'https://explorer.braga.hoodi.arkiv.network'
-const DATA_EXPLORER = 'https://data.arkiv.network'
+const BLOCK_EXPLORER = 'https://rabdi.explorer.arkiv.network'
+const DATA_EXPLORER = 'https://rabdi.explorer.arkiv.network/entity-explorer'
 // Link by eventId (always present) — batched writes don't return per-entity keys.
-const entityUrl = (eventId) => `${DATA_EXPLORER}/?q=${encodeURIComponent(`eventId = "${eventId}"`)}`
+const entityUrl = (eventId) => `${DATA_EXPLORER}?query=${encodeURIComponent(`event_id = str('${eventId}')`)}`
 let events = 0, written = 0, srcRows = 0, arkRows = 0, writeTimes = [], writingTarget = 0, writingDone = 0, skips = 0, isRunning = false
 
 const short = (s, n=8) => s && s.length > n+4 ? s.slice(0,n)+'…'+s.slice(-4) : (s || '')
@@ -211,13 +214,13 @@ const clearEmpty = (feed) => { const e = feed.querySelector('.empty'); if (e) e.
 async function loadEvents() {
   const addr = $('contract').value.trim()
   const sel = $('eventSelect')
-  if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) { sel.innerHTML = '<option value="">dirección inválida</option>'; return }
-  sel.innerHTML = '<option value="">cargando ABI…</option>'
+  if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) { sel.innerHTML = '<option value="">invalid address</option>'; return }
+  sel.innerHTML = '<option value="">loading ABI…</option>'
   try {
     const r = await fetch('/api/abi?address=' + addr + '&chain=' + encodeURIComponent($('chain').value))
     const j = await r.json()
-    if (!j.ok || !j.events.length) throw new Error('sin eventos')
-    sel.innerHTML = `<option value="">— ${j.events.length} eventos — elegí uno —</option>`
+    if (!j.ok || !j.events.length) throw new Error('no events')
+    sel.innerHTML = `<option value="">— ${j.events.length} events — choose one —</option>`
     for (const ev of j.events) {
       const o = document.createElement('option')
       o.value = ev.signature
@@ -226,7 +229,7 @@ async function loadEvents() {
       sel.appendChild(o)
     }
   } catch {
-    sel.innerHTML = '<option value="">ABI no verificada — editá la firma a mano</option>'
+    sel.innerHTML = '<option value="">Unverified ABI — enter the signature manually</option>'
   }
 }
 
@@ -247,8 +250,8 @@ function onWrite(a) {
   const row = document.createElement('div'); row.className = 'rowi'
   const badge = `<span class="badge b-${esc(a.op)}">${esc(a.op)}</span>`
   const id = short(a.eventId, 14)
-  const verify = `<a class="lnk" href="${entityUrl(a.eventId)}" target="_blank" title="Ver esta entidad guardada en el Arkiv Data Explorer">🔍 ver</a>`
-  const tx = a.txHash ? `<a class="lnk" href="${BLOCK_EXPLORER}/tx/${encodeURIComponent(a.txHash)}" target="_blank" title="La transacción on-chain que la escribió">⛓ tx</a>` : `<span></span>`
+  const verify = `<a class="lnk" href="${entityUrl(a.eventId)}" target="_blank" title="Open this Arkiv entity in the explorer">entity</a>`
+  const tx = a.txHash ? `<a class="lnk" href="${BLOCK_EXPLORER}/tx/${encodeURIComponent(a.txHash)}" target="_blank" title="Open the confirmed transaction">tx</a>` : `<span></span>`
   row.innerHTML = `<span class="blk">#${esc(a.block)}</span>${badge}<span class="args" title="${esc(a.eventId)}">${esc(id)}</span>${verify}${tx}`
   feed.insertBefore(row, feed.firstChild); arkRows++
   if (a.op !== 'skip') { written++; writeTimes.push(Date.now()) } else { skips++ }
@@ -267,26 +270,26 @@ function showStatus(text, pct, idle) {
 function onWriting(a) { writingTarget = a.count; writingDone = 0; updateWriting() }
 function updateWriting() {
   const pct = writingTarget ? Math.min(100, Math.round((writingDone / writingTarget) * 100)) : 0
-  showStatus(`Escribiendo en Arkiv… ${writingDone}/${writingTarget} (firmando tx · techo ~25/s con 1 wallet)`, pct, false)
+  showStatus(`Writing Arkiv entities… ${writingDone}/${writingTarget} (awaiting confirmation)`, pct, false)
 }
 function goIdle(lagBlocks) {
   writingTarget = 0
   if (!isRunning) { $('writing').className = 'writing'; return } // stopped → hide
   const caught = !lagBlocks || Number(lagBlocks) === 0
-  const skipNote = skips > 0 ? ` · ${skips} ya existían (skip)` : ''
+  const skipNote = skips > 0 ? ` · ${skips} unchanged (skip)` : ''
   // Don't vanish between blocks — stay visible in a subtle idle state so it never looks frozen.
-  showStatus(caught ? `Al día · esperando el próximo bloque…${skipNote}` : `Procesando el próximo lote…${skipNote}`, 0, true)
+  showStatus(caught ? `Caught up · waiting for the next block…${skipNote}` : `Processing the next batch…${skipNote}`, 0, true)
 }
 
 function onTick(a) {
   // this tick's writes are done: let the bar visibly hit 100%, then drop to a subtle idle state.
-  if (writingTarget > 0) showStatus(`Escribiendo en Arkiv… ${writingTarget}/${writingTarget} ✓`, 100, false)
+  if (writingTarget > 0) showStatus(`Writing Arkiv entities… ${writingTarget}/${writingTarget} ✓`, 100, false)
   setTimeout(() => goIdle(a.lagBlocks), 500)
   $('m-head').textContent = a.head; $('m-safe').textContent = a.safeHead
   const lag = Number(a.lagBlocks); const el = $('m-lag'); el.textContent = a.lagBlocks
   el.className = 'v ' + (lag === 0 ? 'lag-ok' : lag < 50 ? 'lag-warn' : 'lag-bad')
   const banner = $('banner')
-  if (lag > 50) { banner.className = 'banner show'; banner.textContent = `⚠ El worker va ${lag} bloques atrás — Arkiv escribe más lento que la emisión (techo ~25 ev/seg con 1 wallet). No se pierde nada: recupera cuando baje el ritmo.` }
+  if (lag > 50) { banner.className = 'banner show'; banner.textContent = `Worker is ${lag} source blocks behind; inspect its progress.` }
   else banner.className = 'banner'
 }
 
@@ -296,12 +299,14 @@ setInterval(() => { const now = Date.now(); writeTimes = writeTimes.filter(t => 
 function setState(s) {
   const el = $('state'); el.className = 'state state-' + (s === 'running' ? 'running' : s === 'error' ? 'error' : 'stopped')
   el.innerHTML = '<span class="led"></span>' + s
-  $('start').disabled = (s === 'running'); $('stop').disabled = (s !== 'running')
+  $('start').disabled = !writesEnabled || (s === 'running'); $('stop').disabled = (s !== 'running')
 }
 
 // Bounded model: each Start opens a fresh EventSource to /api/run (one time-boxed pass), and we
 // close it on the terminal control event so it never auto-reconnects (which would re-trigger a run).
 let es = null
+let writesEnabled = false
+const operations = new Map()
 function closeStream() { if (es) { es.close(); es = null } }
 function showError(msg) { setState('error'); $('banner').className = 'banner show'; $('banner').textContent = '✗ ' + msg }
 function dispatch(a) {
@@ -315,9 +320,7 @@ function dispatch(a) {
       isRunning = false; setState('stopped'); $('writing').className = 'writing'; closeStream()
       if (a.reason === 'budget' || a.reason === 'cap') {
         $('banner').className = 'banner show'
-        $('banner').textContent = a.reason === 'budget'
-          ? `⏱ Corrida acotada terminada (~45s, límite del demo serverless) · ${a.written} escritas. Dale ▶ Start otra vez para seguir, o ▣ Consultar lo escrito.`
-          : `✓ Tope de ${a.written} entities del demo alcanzado. Dale ▶ Start otra vez, o ▣ Consultar lo escrito.`
+        $('banner').textContent = `Bounded pass ended after ${a.written} writes. Check confirmation before requesting more work.`
       }
     }
     else if (a.state === 'error') { isRunning = false; setState('error'); $('writing').className = 'writing'; closeStream(); showError(a.message) }
@@ -337,7 +340,7 @@ const SAMPLES = {
 function renderSamples() {
   const chain = $('chain').value
   const box = $('samples')
-  box.innerHTML = '<span>muestras (Transfer ERC-20):</span>'
+  box.innerHTML = '<span>Examples (ERC-20 Transfer):</span>'
   for (const [name, addr] of SAMPLES[chain] ?? []) {
     const b = document.createElement('button'); b.className = 'chip'; b.textContent = name
     b.onclick = () => { $('contract').value = addr; $('event').value = ERC20_TRANSFER; loadEvents() }
@@ -359,10 +362,22 @@ async function loadChains() {
   } catch { /* keep default */ }
   renderSamples()
 }
-loadChains()
+awaitReady()
+async function awaitReady() {
+  await loadChains()
+  try {
+    const config = await (await fetch('/api/config')).json()
+    writesEnabled = config.writesEnabled === true
+    $('write-policy').textContent = writesEnabled ? 'A bounded writer is enabled.' : 'This preview is read-only; run the CLI to index your own contract.'
+    $('contract').value = config.contract
+    $('chain').value = config.chain
+    $('start').disabled = !writesEnabled
+    $('queryBtn').click()
+  } catch { showError('Demo configuration unavailable. Try again later.') }
+}
 
 $('chain').onchange = () => {
-  $('eventSelect').innerHTML = '<option value="">— cargá el contrato primero —</option>'
+  $('eventSelect').innerHTML = '<option value="">— load a contract first —</option>'
   renderSamples()
 }
 $('loadAbi').onclick = loadEvents
@@ -378,34 +393,38 @@ function resetCounters() {
 }
 $('start').onclick = () => {
   const contract = $('contract').value.trim(), event = $('event').value.trim()
-  if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) return showError('Dirección de contrato inválida.')
-  if (!event) return showError('Falta la firma del evento.')
+  if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) return showError('Invalid contract address.')
+  if (!event) return showError('Enter an event signature.')
+  if (!writesEnabled) return showError('This preview is read-only. Use the CLI for authorized indexing.')
+  const operationId = JSON.stringify([$('chain').value, contract.toLowerCase(), event, $('mode').value, $('backfillBlocks').value])
+  if (operations.has(operationId)) return showError('This operation was already requested. Check confirmation before continuing.')
+  operations.set(operationId, 'sending')
   resetCounters(); isRunning = true; setState('running')
   const qs = new URLSearchParams({ chain: $('chain').value, contract, event, mode: $('mode').value, backfillBlocks: $('backfillBlocks').value })
   closeStream()
   es = new EventSource('/api/run?' + qs.toString())
-  es.onmessage = (m) => { try { dispatch(JSON.parse(m.data)) } catch {} }
-  es.onerror = () => { closeStream(); if (isRunning) { isRunning = false; setState('stopped'); $('writing').className = 'writing' } }
+  es.onmessage = (m) => { try { const a = JSON.parse(m.data); if (a.txHash) operations.set(operationId, 'submitted:' + a.txHash); dispatch(a) } catch {} }
+  es.onerror = () => { operations.set(operationId, 'uncertain'); closeStream(); if (isRunning) { isRunning = false; setState('stopped'); $('writing').className = 'writing' } }
 }
 $('stop').onclick = () => { closeStream(); isRunning = false; setState('stopped'); $('writing').className = 'writing' }
 $('queryBtn').onclick = async () => {
   const contract = $('contract').value.trim()
-  if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) return showError('Pegá un contrato válido para consultar.')
-  const feed = $('ark'); feed.innerHTML = '<div class="empty">Consultando la base de datos Arkiv…</div>'
+  if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) return showError('Enter a valid contract to query.')
+  const feed = $('ark'); feed.innerHTML = '<div class="empty">Querying Arkiv entities…</div>'
   try {
     const r = await fetch('/api/query?contract=' + contract + '&chain=' + encodeURIComponent($('chain').value))
     const j = await r.json()
     if (!j.ok) throw new Error(j.error)
     feed.innerHTML = ''; arkRows = j.count; $('ark-count').textContent = j.count
-    if (!j.count) { feed.innerHTML = '<div class="empty">0 entities para este contrato todavía — indexá con ▶ Start y reconsultá.</div>'; return }
+    if (!j.count) { feed.innerHTML = '<div class="empty">No entities for this contract. Choose the seeded Sepolia WETH example or index it with the CLI.</div>'; return }
     for (const row of j.rows) {
       const div = document.createElement('div'); div.className = 'rowi'
       const blk = (row.attributes && row.attributes.block) ?? '—', ev = (row.attributes && row.attributes.event) || ''
-      const verify = `<a class="lnk" href="${DATA_EXPLORER}/?q=${encodeURIComponent('$key = "' + row.key + '"')}" target="_blank" title="Ver esta entidad en el Data Explorer">🔍 ver</a>`
+      const verify = `<a class="lnk" href="${DATA_EXPLORER}?query=${encodeURIComponent('$key = key(' + row.key + ')')}" target="_blank" title="Open this Arkiv entity in the explorer">entity</a>`
       div.innerHTML = `<span class="blk">#${esc(blk)}</span><span class="badge b-update">query</span><span class="args" title="${esc(row.key)}">${esc(ev)} · ${esc(short(row.key, 14))}</span>${verify}<span></span>`
       feed.appendChild(div)
     }
-  } catch (e) { feed.innerHTML = '<div class="empty">Error consultando: ' + esc(e.message || e) + '</div>' }
+  } catch (e) { feed.innerHTML = '<div class="empty">Query failed: ' + esc(e.message || e) + '</div>' }
 }
 </script>
 </body>

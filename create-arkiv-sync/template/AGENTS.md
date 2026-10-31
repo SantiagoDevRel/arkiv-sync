@@ -1,13 +1,17 @@
 # Consumer guidance
 
-This project reads source EVM events into a derived Arkiv view using the SDK 0.8-compatible arkiv-sync 0.3 package. Node 20?22 is supported. Use npm install --ignore-scripts; npm start runs the worker. npm run verify performs actual funded writes, not a readonly check.
+This project uses arkiv-sync 1.0.0 with SDK 1.0.0 and Rabdi. Use Node 20 through 22, `npm install --ignore-scripts`, `npm run typecheck`, `npm run verify`, then `npm start`. Verification signs real testnet writes.
 
-Ask the developer for the source chain/RPC, contract/event signatures, block range and confirmation policy; the sink testnet/RPC/chain configuration; a locally configured funded signer; and an approved spend budget. Keep PRIVATE_KEY/access keys in a server secret store, never prompts/bundles/logs. The default sink is SDK Tiramisu. Sorbet needs an explicit operator-verified viem Chain; no sorbet export exists in SDK 0.8.1.
+Ask for source chain/RPC, contract/event signatures, block range and confirmation policy; a locally configured funded testnet signer; and an access key from https://hub.arkiv.network/access-keys. Fund the address at https://hub.arkiv.network/faucet. Keep credentials outside Git, prompts, logs and browser bundles. Missing access keys fail closed.
 
-Do not replace the library's source adapters, cursor, reorg detector or owner/sync-isolated upserts. Query stored lowercase names: event_id, chain_id, content_hash and camelCase-to-snake_case mapper names. Never override reserved names or create collisions. Rich data belongs in payload; bigint DTO values stay exact strings.
+Keep the library's source adapters, atomic cursor, reorg detector and owner/schema/sync-isolated upserts. Identity is chainId:txHash:logIndex plus SHA256 content hash. Store rich JSON in data (unindexed bytes); scalar mapper columns are typed and indexed with snake_case names. Reject reserved names/collisions; exact big integers stay strings in read DTOs.
 
-Lifetime values are seconds and positive multiples of two. A changed record patch replaces payload/attributes but keeps its deadline unless extendOnUpdate:true is explicitly chosen. Read actual expiration blocks; no wall-clock or erasure guarantee.
+Configure expirationSeconds as a positive multiple of two seconds, shorter than 7,884,000 Rabdi blocks. Changed entities replace mapped content while preserving Entity Expiration unless extendOnUpdate explicitly requests Lifetime Extension.
 
-Use typed query literals and quoteValue. query is one page; queryPage returns cursor plus block; queryAll pins all bounded pages and sorts client-side. Never add orderBy or return partial results after cursor/budget failure.
+Reads require owner scope, typed literals and quoteValue. query is one page; queryAll bounds pages and fails on head drift, duplicate keys or budget overflow. Sort client-side; never add orderBy. Rabdi only serves head state: use latest, never safe/finalized/old hashes.
 
-WriteReconciliationRequiredError halts the worker. Preserve its known txHash plus durable input/progress journal, authenticate sender/native input/receipt/readback and reconcile before restart. Missing hash does not prove no transaction landed. One instance serializes writes; coordinate other signers/processes separately. Batch size is chosen from real gas/encoding/provider/budget evidence, not a universal 1,000-op cap.
+The library unsigned-estimates each write at latest, sends explicit gas >= max(1,000,000, 2 ? estimate), explicit gasPrice/latest nonce and splits batches below half the block gas limit. Keep a single writer and coordinate any external process. Caller txParams cannot bypass gas safety limits.
+
+Keep one WriteOperation per operation across clicks. SDK success/hash is terminal for sending even when the later receipt is null/disagrees. Uncertain errors stop. A retry is allowed once only for SDK-confirmed revert with authoritative reverted receipt whose gasUsed equals the sent gas; re-estimate and double gas within half-block ceiling. WriteReconciliationRequiredError halts the worker: preserve hash and durable input/progress journal, authenticate receipt/readback and reconcile before restart.
+
+Public text is English: Arkiv entities, the Web3 database, DB-Chain, Entity Expiration and Lifetime Extension. See installed library README for exact APIs.

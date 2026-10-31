@@ -6,7 +6,7 @@
 //   - hard wall-clock budget (under maxDuration) · max writes · max backfill depth · maxEventsPerTick
 //   - best-effort single-flight per warm instance (one run at a time; avoids burner nonce contention)
 // The burner PRIVATE_KEY lives only in the server env — never sent to the browser.
-import { createIndexer, MemoryCursorStore, days, SOURCE_CHAINS } from 'arkiv-sync'
+import { createIndexer, MemoryCursorStore, days, SOURCE_CHAINS, scrubSecrets, WriteReconciliationRequiredError, storageAttributeName } from 'arkiv-sync'
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/
 const MAX_BACKFILL = 600 // how far back a backfill may scan
@@ -14,11 +14,13 @@ const MAX_EVENTS_PER_TICK = 300 // visible chunking + bounded memory
 const MAX_WRITES = 1500 // hard cap on entities written per run
 const TIME_BUDGET_MS = 45_000 // safely under the 60s function maxDuration
 
-const RESERVED = new Set(['eventId', 'contentHash', 'chainId', 'contract', 'event', 'block', 'sync'])
+const RESERVED = new Set(['event_id', 'content_hash', 'content_type', 'data', 'chain_id', 'contract', 'event', 'block', 'sync'])
 
 // Module-scoped: shared across requests handled by the SAME warm instance (best-effort only —
 // serverless does not share memory across instances; this is a demo, not a distributed lock).
 let busy = false
+let uncertain = false
+const operations = new Map()
 
 async function headOf(chainKey) {
   const d = SOURCE_CHAINS[chainKey]
@@ -63,11 +65,16 @@ export default async function handler(req, res) {
     } catch {}
   }
 
-  if (!ADDR_RE.test(contract)) return fail('Dirección de contrato inválida.')
-  if (!event) return fail('Falta la firma del evento.')
-  if (!SOURCE_CHAINS[chain]) return fail(`Chain desconocida: ${chain}`)
-  if (!process.env.PRIVATE_KEY) return fail('El servidor no tiene PRIVATE_KEY configurada (env var de Vercel).')
-  if (busy) return fail('Hay otra corrida en curso en esta instancia — esperá unos segundos (demo: una a la vez).')
+  if (process.env.ENABLE_DEMO_WRITES !== '1') return fail('This preview is read-only. Use the CLI for authorized indexing.')
+  if (!ADDR_RE.test(contract)) return fail('Invalid contract address.')
+  if (!event) return fail('Enter an event signature.')
+  if (!SOURCE_CHAINS[chain]) return fail('Choose a supported source chain.')
+  if (!process.env.PRIVATE_KEY || !process.env.ARKIV_WRITE_ACCESS_KEY) return fail('The authorized writer is not configured.')
+  if (busy || uncertain) return fail('Writer busy or awaiting reconciliation. Check confirmation before retrying.')
+  const operationId = JSON.stringify([chain, contract.toLowerCase(), event, mode, backfill])
+  if (operations.has(operationId)) return fail('Operation already requested. Check its confirmation before continuing.')
+  if (operations.size >= 100) return fail('Operation journal is full; use the continuous CLI worker.')
+  operations.set(operationId, 'sending')
 
   busy = true
   let indexer = null
@@ -94,20 +101,22 @@ export default async function handler(req, res) {
         contract,
         events: [event],
         fromBlock,
-        confirmations: 2, // low for a snappy demo across chains (lib defaults are higher per chain)
+        confirmations: SOURCE_CHAINS[chain].defaultConfirmations,
         pollIntervalMs: 1500,
         maxEventsPerTick: MAX_EVENTS_PER_TICK,
       },
-      ttlSeconds: days(7),
+      expirationSeconds: days(7),
+      accessKey: process.env.ARKIV_WRITE_ACCESS_KEY,
+      sinkBatchSize: 10,
       map: (e) => {
         const attributes = {}
         let n = 0
         for (const [k, v] of Object.entries(e.args ?? {})) {
           if (n++ >= 6) break
-          const key = RESERVED.has(k) ? `a_${k}` : k
+          const key = RESERVED.has(storageAttributeName(k)) ? `a_${k}` : k
           // 2000 covers any normal EVM value (address 42 · uint256 ~78 · bytes32 66) without truncating;
           // only a pathological long string/bytes arg is capped (this is a demo display bound). The full
-          // event is always in the entity payload (`data`) regardless.
+          // event is always in the entity data bytes column regardless.
           attributes[key] = String(v).slice(0, 2000)
         }
         return { attributes }
@@ -120,6 +129,7 @@ export default async function handler(req, res) {
     indexer = createIndexer(config, {
       cursorStore: new MemoryCursorStore(),
       onActivity: (a) => {
+        if (a.txHash) operations.set(operationId, `submitted:${a.txHash}`)
         if (!stopped) send(a)
       },
     })
@@ -138,7 +148,8 @@ export default async function handler(req, res) {
     const reason = stopped ? 'client' : written >= MAX_WRITES ? 'cap' : Date.now() >= deadline ? 'budget' : 'done'
     send({ kind: 'control', state: 'stopped', written, reason })
   } catch (err) {
-    send({ kind: 'control', state: 'error', message: String(err?.message ?? err) })
+    if (err instanceof WriteReconciliationRequiredError) uncertain = true
+    send({ kind: 'control', state: 'error', message: scrubSecrets(err), txHash: err?.txHash })
   } finally {
     busy = false
     stop()

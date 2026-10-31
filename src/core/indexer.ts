@@ -13,13 +13,13 @@ import { sleep, scrubSecrets } from '../util.js'
 import { detectReorg, pruneCursorWindow, truncateAbove } from './reorg.js'
 import { storageAttributeName, RESERVED_STORAGE_ATTRIBUTES } from '../sink/attributes.js'
 import { WriteReconciliationRequiredError } from '../sink/errors.js'
-import { toValue } from '@arkiv-network/sdk/attr'
+import { toValue } from '@arkiv-network/sdk/schema'
 
 /** Attribute keys the indexer sets itself — a mapper may not override them. */
 const RESERVED_ATTRS = RESERVED_STORAGE_ATTRIBUTES
 
 /**
- * Observability callback payload — what the worker is doing, JSON-safe. Lets a UI/dashboard show the
+ * Observability callback data — what the worker is doing, JSON-safe. Lets a UI/dashboard show the
  * two sides live (events read from the chain → entities written to Arkiv) and the lag in between.
  */
 export type IndexerActivity =
@@ -48,7 +48,7 @@ export interface IndexerOptions {
   sink: Sink
   map: EventMapper
   /** Default entity lifetime in SECONDS (use the time helpers, e.g. days(30)). */
-  ttlSeconds: number
+  expirationSeconds: number
   cursorStore: CursorStore
   logger: Logger
   /** A short label (e.g. contract name/address) to namespace the cursor file. */
@@ -98,7 +98,7 @@ export class Indexer {
   private readonly source: SourceAdapter
   private readonly sink: Sink
   private readonly map: EventMapper
-  private readonly ttlSeconds: number
+  private readonly expirationSeconds: number
   private readonly cursorStore: CursorStore
   private readonly log: Logger
   private readonly confirmations: bigint
@@ -125,7 +125,7 @@ export class Indexer {
     this.source = opts.source
     this.sink = opts.sink
     this.map = opts.map
-    this.ttlSeconds = opts.ttlSeconds
+    this.expirationSeconds = opts.expirationSeconds
     this.cursorStore = opts.cursorStore
     this.log = opts.logger
     this.confirmations = BigInt(opts.confirmations ?? 5)
@@ -201,7 +201,7 @@ export class Indexer {
       this.log.info(`starting ${this.cursorId} at block ${start}`)
     }
     if (!this.sink.reconcile && !this.reconcileWarned) {
-      this.log.warn(`sink "${this.sink.name}" has no reorg reconciliation — orphaned events after a deep reorg may persist until TTL.`)
+      this.log.warn(`sink "${this.sink.name}" has no reorg reconciliation — orphaned events after a deep reorg may persist until Entity Expiration.`)
       this.reconcileWarned = true
     }
     this.initialized = true
@@ -323,7 +323,7 @@ export class Indexer {
     if (recoverUntil !== undefined) {
       const recoTo = toB < recoverUntil ? toB : recoverUntil
       if (recoTo >= fromB && this.sink.reconcile) {
-        // Scope deletion to THIS indexer's own records (sync = cursorId).
+        // Scope deletion to THIS indexer's own entities (sync = cursorId).
         await this.sink.reconcile(fromB, recoTo, canonical, { sync: this.cursorId })
       }
       if (toB >= recoverUntil) recoverUntil = undefined
@@ -474,7 +474,7 @@ export class Indexer {
       { key: 'contract', value: e.address },
       { key: 'event', value: e.eventName },
       { key: 'block', value: e.blockNumber },
-      // Identifies THIS indexer instance, so reorg reconciliation only deletes our own records
+      // Identifies THIS indexer instance, so reorg reconciliation only deletes our own entities
       // (two indexers sharing one wallet must not clobber each other in an overlapping block range).
       { key: 'sync', value: this.cursorId },
     ]
@@ -484,9 +484,9 @@ export class Indexer {
           `Mapper attribute "${key}" is reserved by Arkiv Sync (${[...RESERVED_ATTRS].join(', ')}). Rename it.`,
         )
       }
-      // SDK0.8 validates explicit tags and supported bare scalar values.
+      // SDK1.0 validates explicit tags and supported bare scalar values.
       const value = raw
-      // Rich objects/arrays belong in payload. Reject them before admitting a sink write.
+      // Rich objects/arrays belong in data. Reject them before admitting a sink write.
       if (value === null || value === undefined || (typeof value === 'object' && !('type' in value))) {
         throw new Error(
           `Attribute "${key}" must be a scalar or SDK tagged value (got ${value === null ? 'null' : typeof value}). ` +
@@ -497,7 +497,7 @@ export class Indexer {
       attributes.push({ key, value })
     }
 
-    const payload =
+    const data =
       mapped.data ?? {
         event: e.eventName,
         chainId: e.chainId,
@@ -512,8 +512,8 @@ export class Indexer {
     return {
       eventId: e.eventId,
       attributes,
-      payload,
-      expiresInSeconds: mapped.ttlSeconds ?? this.ttlSeconds,
+      data,
+      expiresInSeconds: mapped.expirationSeconds ?? this.expirationSeconds,
       extendOnUpdate: mapped.extendOnUpdate,
     }
   }

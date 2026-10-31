@@ -165,7 +165,7 @@ class MemorySink implements Sink {
   private hash(r: SinkRecord) {
     return stableStringify({
       a: r.attributes.filter((x) => x.key !== 'contentHash'),
-      p: r.payload,
+      p: r.data,
     })
   }
   async write(record: SinkRecord): Promise<WriteResult> {
@@ -221,7 +221,7 @@ class MemorySink implements Sink {
     const record: SinkRecord = {
       eventId,
       attributes: Object.entries(attrs).map(([key, value]) => ({ key, value })),
-      payload: {},
+      data: {},
       expiresInSeconds: 3600,
     }
     this.store.set(eventId, { record, hash: this.hash(record) })
@@ -247,7 +247,7 @@ function makeIndexer(
     source,
     sink,
     map: opts.map ?? (() => ({})),
-    ttlSeconds: days(30),
+    expirationSeconds: days(30),
     cursorStore: store,
     logger: silentLogger,
     cursorLabel: 'test',

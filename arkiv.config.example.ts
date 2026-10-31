@@ -19,7 +19,7 @@ export default defineConfig({
     fromBlock: 'latest', // or a block number to backfill history
     // confirmations defaults per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75) — set a number to override
   },
-  ttlSeconds: days(30),
+  expirationSeconds: days(30),
   map: (e: NormalizedEvent) => ({
     attributes: {
       from: String(e.args.from).toLowerCase(),

@@ -17,14 +17,14 @@ export default defineConfig({
     fromBlock: 'latest', // or a block number to backfill history
     // confirmations defaults per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75) — set a number to override
   },
-  ttlSeconds: days(30),
+  expirationSeconds: days(30),
   map: (e: NormalizedEvent) => ({
-    // `attributes` become queryable fields. Values use SDK0.8 scalars/tags; camelCase names map to snake_case.
+    // `attributes` become queryable fields. Values use SDK1.0 scalars/tags; camelCase names map to snake_case.
     attributes: {
       from: String(e.args.from).toLowerCase(),
       to: String(e.args.to).toLowerCase(),
       value: String(e.args.value),
     },
-    // Return null instead to SKIP an event. `data: {...}` overrides the stored payload.
+    // Return null instead to SKIP an event. `data: {...}` overrides the stored data.
   }),
 })

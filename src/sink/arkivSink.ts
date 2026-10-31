@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto'
 import { createPublicClient, createWalletClient, ExpirationTime, EntityMutationError, type ExecuteBatchParameters, type PublicArkivClient, type WalletArkivClient } from '@arkiv-network/sdk'
 import { privateKeyToAccount } from 'viem/accounts'
-import { tiramisu } from '@arkiv-network/sdk/chains'
-import { jsonToPayload } from '@arkiv-network/sdk/utils'
-import { addr, str, u64, type ArkivValue, type Attributes } from '@arkiv-network/sdk/attr'
+import { createRabdiNetwork, RABDI_CHAIN_ID, RABDI_EXPLORER_URL, RABDI_MAX_LIFETIME_BLOCKS, type ArkivNetwork } from './network.js'
+import { entitySchema, SYNC_SCHEMA_NAME } from './schema.js'
+import { GasBudgetError, prepareGas } from './gas.js'
+import { WriteOperation, WriteConfirmationError } from './writeOperation.js'
+import { randomSalt, type TxParams } from '@arkiv-network/sdk'
+
+import { addr, bytes, str, u64, type ArkivValue, type Attributes } from '@arkiv-network/sdk/schema'
 import { and, eq, gte, lte, type Expression } from '@arkiv-network/sdk/query'
 import { formatEther, http, type Account, type Chain, type Transport } from 'viem'
 import type { Hex, Logger, Sink, SinkRecord, WriteProgress, WriteResult } from '../types.js'
@@ -11,23 +15,15 @@ import { bigintReplacer, stableStringify, short, scrubSecrets } from '../util.js
 import { normalizeAttributes, storageAttributeName } from './attributes.js'
 import { WriteReconciliationRequiredError } from './errors.js'
 
-export interface ArkivNetwork {
-  chain: Chain
-  name: string
-  isTestnet: boolean
-  explorerUrl?: string
-  faucetUrl?: string
-}
-/** SDK0.8.1 chain; explorer from Arkiv's Tiramisu network documentation. */
-export const TIRAMISU_NETWORK: ArkivNetwork = {
-  chain: tiramisu, name: 'arkiv:tiramisu', isTestnet: true,
-  explorerUrl: 'https://tiramisu.explorer.arkiv.network',
-}
+export type { ArkivNetwork } from './network.js'
 const KNOWN_MAINNETS = new Set([1, 10, 25, 56, 100, 137, 204, 250, 324, 1101, 1284, 5000, 8453, 34443, 42161, 42220, 43114, 59144, 81457, 534352, 7777777, 1313161554])
 
 export interface ArkivSinkOptions {
   /** Supply exactly one local key or caller-owned account. Never put a key in chat/logs. */
   privateKey?: string
+  accessKey?: string
+  /** Per-write overrides may raise gas; safety floors and the half-block ceiling always apply. */
+  txParams?: TxParams
   account?: Account
   rpcUrl?: string
   /** Optional custom transport, including a caller's authenticated server transport. */
@@ -35,9 +31,9 @@ export interface ArkivSinkOptions {
   logger: Logger
   network?: ArkivNetwork
   allowMainnet?: boolean
-  /** Records per batch, package policy rather than a protocol cap. Default50. */
+  /** entities per batch, package policy rather than a protocol cap. Default 50. */
   batchSize?: number
-  /** Maximum rows scanned before reconciliation aborts without deleting. Default10000. */
+  /** Maximum rows scanned before reconciliation aborts without deleting. Default 10000. */
   maxScanRows?: number
 }
 
@@ -54,11 +50,11 @@ function positivePolicy(value: number | undefined, fallback: number, name: strin
 function normalizeKey(raw: string): Hex {
   const value = raw.trim()
   const key = value.startsWith('0x') ? value : `0x${value}`
-  if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error('PRIVATE_KEY must be32-byte hex. Configure a locally held throwaway testnet key.')
+  if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error('PRIVATE_KEY must be 32-byte hex. Configure a locally held throwaway testnet key.')
   return key as Hex
 }
 type Existing = { key: Hex; contentHash?: string; attributes: Attributes; expiresAt: bigint }
-type Prepared = { record: SinkRecord; contentHash: string; attributes: Readonly<Record<string, ArkivValue>>; payload: Uint8Array; contentType: string; expires: ReturnType<typeof ExpirationTime.fromSeconds> }
+type Prepared = { record: SinkRecord; contentHash: string; attributes: Attributes; expires: ReturnType<typeof ExpirationTime.fromSeconds> }
 
 /** Source EVM logs -> mutable Arkiv derived entities. One instance has one exclusive writer queue. */
 export class ArkivSink implements Sink {
@@ -68,6 +64,7 @@ export class ArkivSink implements Sink {
   private readonly allowMainnet: boolean
   private readonly batchSize: number
   private readonly maxScanRows: number
+  private readonly txParams: TxParams
   private readonly pub: PublicArkivClient
   private readonly wallet: WalletArkivClient
   private readonly account: Account
@@ -82,12 +79,13 @@ export class ArkivSink implements Sink {
     if (Boolean(opts.account) === Boolean(opts.privateKey)) throw new Error('Supply exactly one account or privateKey.')
     this.account = opts.account ?? privateKeyToAccount(normalizeKey(opts.privateKey!))
     this.log = opts.logger
-    this.network = opts.network ?? TIRAMISU_NETWORK
+    this.network = opts.network ?? createRabdiNetwork(opts.accessKey)
+    this.txParams = opts.txParams ?? {}
     this.allowMainnet = opts.allowMainnet ?? process.env.ARKIV_ALLOW_MAINNET === '1'
     this.batchSize = positivePolicy(opts.batchSize, 50, 'batchSize')
     this.maxScanRows = positivePolicy(opts.maxScanRows, 10_000, 'maxScanRows')
     this.name = this.network.name
-    this.identity = `arkiv:${this.network.chain.id}:${this.account.address.toLowerCase()}:storage3`
+    this.identity = `arkiv:${this.network.chain.id}:${this.account.address.toLowerCase()}:storage4`
     const transport = opts.transport ?? http(opts.rpcUrl, { retryCount: 0, fetchOptions: { cache: 'no-store' } })
     this.pub = createPublicClient({ chain: this.network.chain, transport })
     this.wallet = createWalletClient({ chain: this.network.chain, account: this.account, transport })
@@ -103,32 +101,32 @@ export class ArkivSink implements Sink {
     assertWritableChain(await this.pub.getChainId(), this.network, this.allowMainnet)
     if (this.initialized) return
     this.startBalance = await this.pub.getBalance({ address: this.address })
-    if (this.startBalance === 0n) throw new Error(`Wallet ${short(this.address)} has0 balance on ${this.name}; fund it with the network gas token.`)
+    if (this.startBalance === 0n) throw new Error(`Wallet ${short(this.address)} has zero balance on ${this.name}; fund it with the network gas token.`)
     this.initialized = true
     this.log.info(`sink ready: ${this.name}, wallet ${short(this.address)}`)
   }
-  private owner(): Expression { return eq('$owner', addr(this.address)) }
+  private owner(): Expression { return and(eq('$owner', addr(this.address)), eq('arkiv.schema', str(SYNC_SCHEMA_NAME))) }
   private async scan(predicate: Expression, maxRows: number): Promise<Existing[]> {
-    const atBlock = await this.pub.getBlockNumber({ cacheTime: 0 })
     const rows: Existing[] = []
-    let cursor: string | undefined
+    let offset = 0
+    let snapshot: bigint | undefined
     const seen = new Set<string>()
-    do {
-      const page = await this.pub.query(predicate, { atBlock, cursor, limit: 200,
-        select: { key: true, owner: true, attributes: true, expiresAt: true } })
-      if (page.blockNumber !== atBlock) throw new Error('RPC returned a different snapshot block.')
+    while (true) {
+      const page = await this.pub.query(predicate, { offset, limit: 100,
+        select: { $key: true, $owner: true, $attributes: true, $expiresAt: true } })
+      snapshot ??= page.blockNumber
+      if (page.blockNumber !== snapshot) throw new Error('Head changed during scan; no partial reconciliation is allowed.')
       for (const entity of page.entities) {
-        if (!entity.key || !entity.attributes || entity.expiresAt === undefined || entity.owner?.toLowerCase() !== this.address.toLowerCase()) throw new Error('Incomplete or out-of-owner scoped query result.')
-        rows.push({ key: entity.key, attributes: entity.attributes, expiresAt: entity.expiresAt,
-          contentHash: entity.attributes.content_hash?.type === 'str' ? entity.attributes.content_hash.value : undefined })
+        if (!entity.$key || !entity.$attributes || entity.$expiresAt === undefined || entity.$owner?.toLowerCase() !== this.address.toLowerCase()) throw new Error('Incomplete or out-of-owner scoped query result.')
+        if (seen.has(entity.$key)) throw new Error('Repeated entity during scan; refusing incomplete reconciliation.')
+        seen.add(entity.$key)
+        rows.push({ key: entity.$key, attributes: entity.$attributes, expiresAt: entity.$expiresAt,
+          contentHash: entity.$attributes.content_hash?.type === 'str' ? entity.$attributes.content_hash.value : undefined })
         if (rows.length > maxRows) throw new Error(`Scoped query exceeded maxScanRows ${maxRows}; no partial reconciliation is allowed.`)
       }
-      cursor = page.cursor
-      if (cursor) {
-        if (seen.has(cursor)) throw new Error('RPC repeated a pagination cursor.')
-        seen.add(cursor)
-      }
-    } while (cursor)
+      if (page.entities.length < 100) break
+      offset += page.entities.length
+    }
     return rows
   }
   private async findByEventId(id: string, scope: Record<string,string|number> = {}): Promise<Existing | undefined> {
@@ -140,36 +138,55 @@ export class ArkivSink implements Sink {
   }
   private prepare(record: SinkRecord): Prepared {
     const expires = ExpirationTime.fromSeconds(record.expiresInSeconds)
+    if (this.network.chain.id === RABDI_CHAIN_ID && expires.minLifetime >= RABDI_MAX_LIFETIME_BLOCKS) {
+      throw new Error('Entity Expiration must be below Rabdi maxLifetime; use Lifetime Extension for longer-lived entities.')
+    }
     const normalized = normalizeAttributes(record.attributes)
     const suppliedId = normalized.event_id
     if (suppliedId && (suppliedId.type !== 'str' || suppliedId.value !== record.eventId)) throw new Error('event_id attribute does not match record.eventId.')
-    const payloadJson = toJsonObject(record.payload)
+    const dataJson = toJsonObject(record.data)
     const contentType = record.contentType ?? 'application/json'
-    const attributes = { ...normalized, event_id: str(record.eventId) }
+    const attributes = { ...normalized, event_id: str(record.eventId),
+      data: bytes(new TextEncoder().encode(stableStringify(dataJson))), content_type: str(contentType) }
     const contentHash = createHash('sha256').update(stableStringify({ contentType,
       expiresInSeconds: record.expiresInSeconds, extendOnUpdate: record.extendOnUpdate ?? false,
-      attributes, payload: payloadJson })).digest('hex')
-    return { record, contentHash, payload: jsonToPayload(payloadJson), contentType, expires,
+      attributes, data: dataJson })).digest('hex')
+    return { record, contentHash, expires,
       attributes: { ...attributes, content_hash: str(contentHash) } }
   }
   private replacement(prepared: Prepared, existing: Existing): NonNullable<ExecuteBatchParameters['patches']> {
-    return [{ entityKey: existing.key, set: prepared.attributes,
-      unset: Object.keys(existing.attributes).filter(name => !Object.hasOwn(prepared.attributes, name)),
-      payload: prepared.payload, contentType: prepared.contentType }]
+    const old = Object.fromEntries(Object.entries(existing.attributes).filter(([name]) => name !== 'arkiv.schema'))
+    return [{ schema: entitySchema({ ...old, ...prepared.attributes }), entityKey: existing.key, set: prepared.attributes,
+      unset: Object.keys(old).filter(name => !Object.hasOwn(prepared.attributes, name)) }]
   }
-  private async submit(params: ExecuteBatchParameters) {
-    await this.init() // Recheck actual chain before every admitted wallet call.
-    try { return await this.wallet.executeBatch(params) }
-    catch (cause) {
-      this.blocked = new WriteReconciliationRequiredError('Arkiv write requires reconciliation; automatic resubmission is stopped.',
-        { cause, txHash: cause instanceof EntityMutationError ? cause.txHash : undefined })
+  private async submit(params: ExecuteBatchParameters, override: TxParams = this.txParams) {
+    await this.init()
+    // Fixed salts ensure the SDK estimates exactly the bytes it will later sign.
+    params = { ...params, creates: params.creates?.map(item => ({ ...item, salt: item.salt ?? randomSalt() })) }
+    const operation = new WriteOperation<Awaited<ReturnType<WalletArkivClient['executeBatch']>>>()
+    try {
+      return await operation.run({
+        prepare: previousGas => prepareGas(this.pub, this.account, params, override, previousGas),
+        send: tx => this.wallet.executeBatch(params, tx),
+        receipt: async hash => {
+          try { return await this.pub.getTransactionReceipt({ hash }) }
+          catch (error) { if ((error as Error).name === 'TransactionReceiptNotFoundError') return null; throw error }
+        },
+        // A hash alone is insufficient: SDK also throws after successful receipts it cannot decode.
+        confirmedRevertHash: error => error instanceof EntityMutationError && /reverted/i.test(error.message) ? error.txHash : undefined,
+        errorHash: error => error instanceof EntityMutationError ? error.txHash : undefined,
+      })
+    } catch (cause) {
+      if (operation.attempts === 0) throw cause
+      this.blocked = new WriteReconciliationRequiredError('Arkiv write requires reconciliation; further writes are stopped.',
+        { cause, txHash: operation.txHash ?? (cause instanceof WriteConfirmationError ? cause.txHash : undefined) })
       throw this.blocked
     }
   }
-  async write(record: SinkRecord, onWritten?: WriteProgress): Promise<WriteResult> {
-    return (await this.writeBatch([record], onWritten))[0]!
+  async write(record: SinkRecord, onWritten?: WriteProgress, txParams?: TxParams): Promise<WriteResult> {
+    return (await this.writeBatch([record], onWritten, txParams))[0]!
   }
-  async writeBatch(records: SinkRecord[], onWritten?: WriteProgress): Promise<WriteResult[]> {
+  async writeBatch(records: SinkRecord[], onWritten?: WriteProgress, txParams?: TxParams): Promise<WriteResult[]> {
     if (!records.length) return []
     const byId = new Map(records.map(record => [record.eventId, record]))
     const prepared = [...byId.values()].map(record => this.prepare(record))
@@ -208,22 +225,33 @@ export class ArkivSink implements Sink {
         }
         return true
       })
-      for (let i=0; i<changed.length; i+=this.batchSize) {
-        const chunk = changed.slice(i,i+this.batchSize)
+      const queue: Prepared[][] = []
+      for (let i = 0; i < changed.length; i += this.batchSize) queue.push(changed.slice(i, i + this.batchSize))
+      while (queue.length) {
+        const chunk = queue.shift()!
         const creates = chunk.filter(p => !existing.has(p.record.eventId))
         const updates = chunk.filter(p => existing.has(p.record.eventId))
         const params: ExecuteBatchParameters = {
-          creates: creates.map(p => ({ payload: p.payload, contentType: p.contentType, attributes: p.attributes, expires: p.expires })),
+          creates: creates.map(p => ({ schema: entitySchema(p.attributes), values: p.attributes, expiration: p.expires })),
           patches: updates.flatMap(p => this.replacement(p, existing.get(p.record.eventId)!)),
         }
-        const extensions: NonNullable<ExecuteBatchParameters['extensions']> = []
+        const extensions: Array<{ entityKey: Hex; expiration: ReturnType<typeof ExpirationTime.atBlock> }> = []
         for (const p of updates) if (p.record.extendOnUpdate) {
           const old = existing.get(p.record.eventId)!
           extensions.push({ entityKey: old.key,
-            expires: ExpirationTime.atBlock(old.expiresAt + 1n, { atLeast: p.expires }) })
+            expiration: ExpirationTime.atBlock(old.expiresAt + 1n, { atLeast: p.expires }) })
         }
         if (extensions.length) params.extensions = extensions
-        const result = await this.submit(params)
+        let result
+        try { result = await this.submit(params, txParams) }
+        catch (error) {
+          if (error instanceof GasBudgetError && chunk.length > 1) {
+            const midpoint = Math.ceil(chunk.length / 2)
+            queue.unshift(chunk.slice(0, midpoint), chunk.slice(midpoint))
+            continue
+          }
+          throw error
+        }
         if (result.createdEntities.length !== creates.length || result.patchedEntities.length !== updates.length || result.extendedEntities.length !== extensions.length) {
           this.blocked = new WriteReconciliationRequiredError('Successful batch returned unmatched key counts; preserve txHash and reconcile.', { txHash: result.txHash })
           throw this.blocked
@@ -274,7 +302,7 @@ export class ArkivSink implements Sink {
       })
       for (let i=0; i<stale.length; i+=this.batchSize) {
         const keys = stale.slice(i,i+this.batchSize).map(row => row.key)
-        const result = await this.submit({ deletes:keys.map(entityKey => ({entityKey})) })
+        const result = await this.submitDeletes(keys)
         if (result.deletedEntities.length !== keys.length || result.deletedEntities.some((key,index) => key !== keys[index])) {
           this.blocked = new WriteReconciliationRequiredError('Successful deletion count/keys mismatch; reconcile.',{txHash:result.txHash})
           throw this.blocked
@@ -282,6 +310,16 @@ export class ArkivSink implements Sink {
       }
       return stale.length
     })
+  }
+  private async submitDeletes(keys: Hex[]): Promise<{ deletedEntities: Hex[]; txHash: Hex }> {
+    try { return await this.submit({ deletes: keys.map(entityKey => ({ entityKey })) }) }
+    catch (error) {
+      if (!(error instanceof GasBudgetError) || keys.length <= 1) throw error
+      const midpoint = Math.ceil(keys.length / 2)
+      const first = await this.submitDeletes(keys.slice(0, midpoint))
+      const second = await this.submitDeletes(keys.slice(midpoint))
+      return { deletedEntities: [...first.deletedEntities, ...second.deletedEntities], txHash: second.txHash }
+    }
   }
   async balance(): Promise<bigint> { return this.pub.getBalance({ address:this.address }) }
   costSummary(): undefined { return undefined } // No receipt-fee journal is maintained by this sink.
@@ -292,13 +330,13 @@ export class ArkivSink implements Sink {
     const spentGlm = Number(formatEther(spent))
     return {spentGlm,writes:this.writes,perWriteGlm:this.writes ? spentGlm/this.writes : 0}
   }
-  static explorerTx(hash:string):string { return `${TIRAMISU_NETWORK.explorerUrl}/tx/${hash}` }
+  static explorerTx(hash:string):string { return `${RABDI_EXPLORER_URL}/tx/${hash}` }
   explorerTxUrl(hash:string):string {
     if (!this.network.explorerUrl) throw new Error('Configure the verified network explorer URL.')
     return `${this.network.explorerUrl}/tx/${hash}`
   }
 }
-function toJsonObject(payload:unknown):object {
-  if (payload && typeof payload === 'object') return JSON.parse(JSON.stringify(payload,bigintReplacer))
-  return {value:typeof payload === 'bigint' ? payload.toString() : payload}
+function toJsonObject(data:unknown):object {
+  if (data && typeof data === 'object') return JSON.parse(JSON.stringify(data,bigintReplacer))
+  return {value:typeof data === 'bigint' ? data.toString() : data}
 }

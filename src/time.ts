@@ -3,8 +3,8 @@
  * milliseconds is a classic footgun (an entity meant to live 30 days would live ~30,000
  * years). These helpers make the unit explicit and always return a positive integer.
  *
- *   ttl: days(30)      // 30 days, in seconds
- *   ttl: hours(12)     // 12 hours, in seconds
+ *   expirationSeconds: days(30)      // 30 days, in seconds
+ *   expirationSeconds: hours(12)     // 12 hours, in seconds
  */
 
 function asSeconds(value: number, perUnit: number, unit: string): number {
@@ -20,7 +20,7 @@ export const hours = (n: number) => asSeconds(n, 3600, 'hours')
 export const days = (n: number) => asSeconds(n, 86400, 'days')
 export const weeks = (n: number) => asSeconds(n, 604800, 'weeks')
 
-/** Human-readable description of a seconds TTL, for logs/confirmations. */
+/** Human-readable description of a seconds Entity Expiration, for logs/confirmations. */
 export function describeSeconds(s: number): string {
   if (s >= 86400) return `${Math.round((s / 86400) * 10) / 10} day(s)`
   if (s >= 3600) return `${Math.round((s / 3600) * 10) / 10} hour(s)`

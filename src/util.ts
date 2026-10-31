@@ -81,6 +81,11 @@ export function scrubSecrets(input: unknown): string {
     /([?&#](?:api[-_]?key|key|token|secret|client[-_]?secret|password|passwd|pwd|auth|authorization|access[-_]?token)=)[^&\s"']+/gi,
     '$1<redacted>',
   )
+  s = s.replace(/(https?:\/\/rpc\.rabdi\.db-chain\.testnet\.arkiv\.network)\/[^\s\"'/?#]+/gi, '$1/<redacted>')
+  for (const name of ['ARKIV_ACCESS_KEY', 'ARKIV_ACCESS_KEY_A', 'ARKIV_ACCESS_KEY_B', 'PRIVATE_KEY']) {
+    const secret = process.env[name]
+    if (secret) s = s.split(secret).join('<redacted>')
+  }
   return s
 }
 

@@ -10,6 +10,8 @@
 dist/
 dist-types/
 *.tgz
+artifacts/
+web-demo/public/
 
 # Dependencies
 node_modules/

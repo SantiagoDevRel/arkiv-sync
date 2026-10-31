@@ -1,8 +1,8 @@
-/** Real SDK0.8.1 clients and ABI encoding, deterministic in-memory RPC only; no network/keys. */
+/** Real SDK 1.0.0 clients and ABI encoding, deterministic in-memory RPC only; no network/keys. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { ENTITY_EVENTS_ABI } from '@arkiv-network/sdk'
-import { bool, dec, u64, u256 } from '@arkiv-network/sdk/attr'
+import { bool, dec, u64, u256 } from '@arkiv-network/sdk/schema'
 import { custom, defineChain, parseAbi, parseAbiParameters, decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeEventTopics, hexToBytes, bytesToHex, type Hex } from 'viem'
 import { ArkivSink, type ArkivNetwork } from '../src/sink/arkivSink.js'
 import { createArkivReader } from '../src/sink/arkivQuery.js'
@@ -14,8 +14,8 @@ import type { SinkRecord } from '../src/types.js'
 const OWNER='0x00000000000000000000000000000000000000aa' as const
 const OTHER='0x00000000000000000000000000000000000000bb' as const
 const NATIVE='0x4400000000000000000000000000000000000044' as const
-const chain=defineChain({id:7706815,name:'Sorbet fixture',nativeCurrency:{name:'Fixture',symbol:'TEST',decimals:18},rpcUrls:{default:{http:['http://fixture.invalid']}},testnet:true})
-const network:ArkivNetwork={chain,name:'fixture:sorbet',isTestnet:true}
+const chain=defineChain({id:7794095,name:'Rabdi fixture',nativeCurrency:{name:'Fixture',symbol:'TEST',decimals:18},rpcUrls:{default:{http:['http://fixture.invalid']}},testnet:true})
+const network:ArkivNetwork={chain,name:'fixture:rabdi',isTestnet:true}
 const EXECUTE=parseAbi(['function execute((uint8 operation,bytes operationData)[] ops) returns(bytes32[] keys)'])
 const ATTR='(bytes32 name,uint8 typeId,bytes value)[]'
 const PARAMS={
@@ -26,14 +26,15 @@ const PARAMS={
   5:parseAbiParameters('(bytes32 entityKey)'),
 }
 type Cell={name:Hex;typeId:number;value:Hex}
-type Row={key:Hex;owner:Hex;creator:Hex;expiresAt:bigint;attributes:Map<string,{type:string;value:unknown}>;payload:Hex;contentType:string}
+type Row={key:Hex;owner:Hex;creator:Hex;expiresAt:bigint;attributes:Map<string,{type:string;value:unknown}>;data:Hex;contentType:string}
 const TYPES:Record<number,{tag:string;abi:string}>={1:{tag:'bool',abi:'bool'},2:{tag:'i32',abi:'int32'},3:{tag:'u64',abi:'uint64'},4:{tag:'u256',abi:'uint256'},5:{tag:'dec',abi:'int256'},6:{tag:'bytes32',abi:'bytes32'},7:{tag:'bytes',abi:'bytes'},8:{tag:'str',abi:'string'},9:{tag:'addr',abi:'address'},10:{tag:'key',abi:'bytes32'}}
 const hash=(s:string) => ('0x'+createHash('sha256').update(s).digest('hex')) as Hex
 const quantity=(n:bigint|number) => ('0x'+BigInt(n).toString(16)) as Hex
 class Fixture {
-  rows=new Map<Hex,Row>(); receipts=new Map<Hex,unknown>(); head=100n; chainId=7706815; sends=0
+  rows=new Map<Hex,Row>(); receipts=new Map<Hex,unknown>(); head=100n; chainId=7794095; sends=0
   requests:Array<{method:string;params:unknown}>=[]
-  batches:number[][]=[]; pageSize=200; fault?:'cursor'|'broadcast'|'decode'; queryOwner?:Hex
+  batches:number[][]=[]; pageSize=200; fault?:'cursor'|'broadcast'|'decode'|'estimate'; queryOwner?:Hex
+  estimatePerOp=0n; driftOnOffset=false
   advanceHeadOnSend=false
   transport=custom({request:async ({method,params}) => this.request(method,params)}, {retryCount:0})
   sink(opts:Partial<ConstructorParameters<typeof ArkivSink>[0]>={}) {return new ArkivSink({account:{address:OWNER,type:'json-rpc'},network,logger:silentLogger,transport:this.transport,...opts})}
@@ -41,11 +42,9 @@ class Fixture {
     for (const cell of cells) {
       const name=new TextDecoder().decode(hexToBytes(cell.name)).replace(/\0+$/,'')
       if (cell.typeId===0) {row.attributes.delete(name);continue}
-      const type=TYPES[cell.typeId]!
+      const type=TYPES[cell.typeId & 127]!
       const decoded = type.tag==='str' ? new TextDecoder().decode(hexToBytes(cell.value)) :
         type.tag==='bytes' ? cell.value : decodeAbiParameters(parseAbiParameters(type.abi),cell.value)[0]
-      if (name==='$payload') {row.payload=decoded as Hex;continue}
-      if (name==='$contentType') {row.contentType=decoded as string;continue}
       let value:unknown=decoded
       if (type.tag==='u64'||type.tag==='u256') value=quantity(decoded as bigint)
       if (type.tag==='dec') {
@@ -57,7 +56,7 @@ class Fixture {
     }
   }
   private rpc(row:Row) {return {key:row.key,owner:this.queryOwner ?? row.owner,creator:row.creator,expiresAt:quantity(row.expiresAt),
-    attributes:[...row.attributes].map(([name,cell])=>({name,...cell})),payload:row.payload,contentType:row.contentType}}
+    attributes:[...row.attributes].map(([name,cell])=>({name,...cell})),data:row.data,contentType:row.contentType}}
   private log(eventName:'EntityCreated'|'ExpiryExtended'|'EntityPatched'|'EntityDeleted',key:Hex,expiresAt?:bigint) {
     const topics=encodeEventTopics({abi:ENTITY_EVENTS_ABI,eventName,args:{entityKey:key,owner:OWNER}})
     const data=eventName==='EntityCreated' ? encodeAbiParameters(parseAbiParameters('uint64,uint8'),[expiresAt!,0]) :
@@ -70,30 +69,42 @@ class Fixture {
     if (method==='eth_chainId') return quantity(this.chainId)
     if (method==='eth_blockNumber') return quantity(this.head)
     if (method==='eth_getBalance') return quantity(10n**18n)
-    if (method==='eth_estimateGas') return quantity(100000)
+    if (method==='eth_estimateGas') {
+      assert.equal(list[1], 'latest', 'unsigned estimate must use latest')
+      if (this.fault === 'estimate') throw new Error('fixture estimate rejected')
+      const decoded=decodeFunctionData({abi:EXECUTE,data:list[0].data})
+      return quantity(this.estimatePerOp ? this.estimatePerOp * BigInt(decoded.args![0].length) : 100000)
+    }
     if (method==='eth_getTransactionCount') return '0x0'
     if (method==='eth_gasPrice') return '0x1'
+    if (method==='eth_getBlockByNumber') return { number:quantity(this.head), hash:hash('head'), parentHash:hash('parent'), gasLimit:quantity(30_000_000), gasUsed:quantity(0), timestamp:quantity(100), transactions:[], baseFeePerGas:null }
     if (method==='arkiv_query') {
       const [query,options]=list as [string,any]
       assert(options.select.key && options.select.attributes,'current SDK projection')
-      assert.equal(options.atBlock,quantity(this.head),'every sink/complete-reader query pins snapshot')
+      assert(!('atBlock' in options) && !('cursor' in options), 'SDK 1 queries the head with offsets')
       assert(!('includeData' in options) && !('resultsPerPage' in options),'no legacy options')
-      if (options.cursor && this.fault==='cursor') throw Object.assign(new Error('fixture cursor rejected'),{code:-32005})
+      if (options.offset && options.offset!=='0x0' && this.fault==='cursor') throw Object.assign(new Error('fixture cursor rejected'),{code:-32005})
+      if (options.offset && options.offset!=='0x0' && this.driftOnOffset) this.head++
       let rows=[...this.rows.values()].filter(row=>row.expiresAt>this.head)
       const owner=/\$owner = addr\((0x[0-9a-fA-F]+)\)/.exec(query)?.[1]
       if (owner) rows=rows.filter(row=>row.owner.toLowerCase()===owner.toLowerCase())
+      const schema=/arkiv\.schema = str\('([^']+)'\)/.exec(query)?.[1]
+      if (schema) rows=rows.filter(row=>row.attributes.get('arkiv.schema')?.value===schema)
       for (const m of query.matchAll(/(event_id|sync|contract) = str\('((?:[^']|'')*)'\)/g)) rows=rows.filter(row=>row.attributes.get(m[1]!)?.value===m[2]!.replace(/''/g,"'"))
       const low=/block >= u64\((\d+)\)/.exec(query)?.[1],high=/block <= u64\((\d+)\)/.exec(query)?.[1]
       if(low) rows=rows.filter(row=>BigInt(row.attributes.get('block')!.value as string)>=BigInt(low))
       if(high) rows=rows.filter(row=>BigInt(row.attributes.get('block')!.value as string)<=BigInt(high))
-      const offset=options.cursor ? Number(options.cursor.slice(1)) : 0
+      const offset=Number(BigInt(options.offset ?? '0x0'))
       const size=Math.min(this.pageSize,Number(BigInt(options.limit)))
-      return {data:rows.slice(offset,offset+size).map(row=>this.rpc(row)),blockNumber:quantity(this.head),cursor:offset+size<rows.length ? `c${offset+size}` : undefined}
+      return {data:rows.slice(offset,offset+size).map(row=>this.rpc(row)),blockNumber:quantity(this.head),count:quantity(rows.length)}
     }
     if (method==='eth_sendTransaction') {
       this.sends++
       if (this.advanceHeadOnSend) this.head++
       const transaction=list[0]
+      assert(BigInt(transaction.gas) >= 1_000_000n)
+      assert(BigInt(transaction.gas) <= 15_000_000n)
+      assert(BigInt(transaction.gasPrice) > 0n)
       assert.equal(transaction.to.toLowerCase(),NATIVE.toLowerCase())
       const decoded=decodeFunctionData({abi:EXECUTE,data:transaction.data})
       const operations=decoded.args![0]
@@ -104,7 +115,7 @@ class Fixture {
         const [args]=decodeAbiParameters(PARAMS[op.operation as keyof typeof PARAMS],op.operationData) as any
         if(op.operation===1) {
           const key=hash(`fixture-entity-${this.rows.size}-${this.sends}-${logs.length}`)
-          const row:Row={key,owner:OWNER,creator:OWNER,expiresAt:args.expiresAt>this.head+args.minLifetime ? args.expiresAt : this.head+args.minLifetime,attributes:new Map(),payload:'0x',contentType:''}
+          const row:Row={key,owner:OWNER,creator:OWNER,expiresAt:args.expiresAt>this.head+args.minLifetime ? args.expiresAt : this.head+args.minLifetime,attributes:new Map(),data:'0x',contentType:''}
           this.cells(row,args.attributes);this.rows.set(key,row);logs.push(this.log('EntityCreated',key,row.expiresAt))
         } else {
           const row=this.rows.get(args.entityKey)!
@@ -127,14 +138,14 @@ class Fixture {
   }
 }
 function record(id:string,attrs:Record<string,any>={},sync='sync-a'):SinkRecord {
-  return {eventId:id,attributes:Object.entries({eventId:id,chainId:11155111,block:9007199254740993n,sync,...attrs}).map(([key,value])=>({key,value})),payload:{message:id,value:9007199254740995n},expiresInSeconds:120}
+  return {eventId:id,attributes:Object.entries({eventId:id,chainId:11155111,block:9007199254740993n,sync,...attrs}).map(([key,value])=>({key,value})),data:{message:id,value:9007199254740995n},expiresInSeconds:120}
 }
 const outcomes:Array<{name:string;status:string}>=[]
 async function test(name:string,run:()=>Promise<void>|void) {
   await run();outcomes.push({name,status:'PASS'});console.log(`PASS ${name}`)
 }
 await test('default explorer is documented while an unspecified custom explorer fails closed',()=>{
-  assert.equal(ArkivSink.explorerTx(hash('transaction')),`https://tiramisu.explorer.arkiv.network/tx/${hash('transaction')}`)
+  assert.equal(ArkivSink.explorerTx(hash('transaction')),`https://rabdi.explorer.arkiv.network/tx/${hash('transaction')}`)
   assert.throws(()=>new Fixture().sink().explorerTxUrl(hash('transaction')),/verified network explorer/)
 })
 await test('current SDK real create -> typed read -> dedup skip',async()=>{
@@ -158,8 +169,7 @@ await test('immediate same-input replay reads a fresh post-receipt head and admi
   assert.equal(f.head,101n);assert.equal(created.op,'create')
   const replay=await sink.write(input)
   assert.equal(replay.op,'skip');assert.equal(f.sends,1);assert.equal(f.rows.size,1)
-  const snapshots=f.requests.filter(request=>request.method==='arkiv_query').map(request=>(request.params as any[])[1].atBlock)
-  assert.deepEqual(snapshots,['0x64','0x65'])
+  assert.equal(f.rows.size,1)
 })
 await test('complete reader immediately observes the next block after a previous empty snapshot',async()=>{
   const f=new Fixture();f.advanceHeadOnSend=true
@@ -218,19 +228,22 @@ await test('chain mismatch rejects even after earlier initialization',async()=>{
   const f=new Fixture(),sink=f.sink();await sink.init();f.chainId=1
   await assert.rejects(sink.write(record('a')),/mainnet/);assert.equal(f.sends,0)
 })
-await test('bounded pinned multi-page read preserves exact numeric sort',async()=>{
+await test('bounded same-head offset pages preserve exact numeric sort',async()=>{
   const f=new Fixture(),sink=f.sink();await sink.writeBatch([record('a',{rank:u64(9007199254740993n)}),record('b',{rank:u64(9007199254740992n)}),record('c',{rank:u64(10n)})])
-  f.pageSize=1;const reader=createArkivReader({chain,transport:f.transport})
+  f.pageSize=100;const reader=createArkivReader({chain,transport:f.transport})
   const rows=await reader.queryAll("sync = str('sync-a')",{owner:OWNER,maxResults:3,limit:2,sortBy:'rank',sortDir:'asc'})
   assert.deepEqual(rows.map(r=>r.attributes.rank),['10','9007199254740992','9007199254740993'])
-  await assert.rejects(reader.queryAll("sync = str('sync-a')",{owner:OWNER,maxResults:2}),/maxResults/)
-  await assert.rejects(reader.queryPage("sync = str('sync-a')",{cursor:'c1'}),/original atBlock/)
+  await assert.rejects(reader.queryAll("sync = str('sync-a')",{owner:OWNER,maxResults:2,limit:2}),/maxResults/)
+  await assert.rejects(reader.queryPage("sync = str('sync-a')"),/owner/)
 })
 await test('cursor failure returns no partial result and admits no write/delete',async()=>{
   const f=new Fixture(),sink=f.sink();await sink.writeBatch([record('a'),record('b')]);const sends=f.sends
-  f.pageSize=1;f.fault='cursor'
+  await sink.writeBatch(Array.from({length:100},(_,i)=>record('page-'+i)));const before=f.rows.size
+  const sendsBeforeFault=f.sends
+  f.pageSize=100;f.fault='cursor'
   await assert.rejects(sink.reconcile(9007199254740993n,9007199254740993n,new Set(),{sync:'sync-a'}))
-  assert.equal(f.sends,sends);assert.equal(f.rows.size,2)
+  assert.equal(f.rows.size,before)
+  assert.equal(f.sends,sendsBeforeFault)
 })
 await test('out-of-owner RPC row fails closed',async()=>{
   const f=new Fixture(),sink=f.sink();await sink.write(record('a'));f.queryOwner=OTHER
@@ -266,4 +279,30 @@ await test('sender-scoped duplicate entities require reconciliation',async()=>{
   f.rows.set(hash('duplicate'),{...row,key:hash('duplicate')})
   await assert.rejects(sink.write(record('a')),/Duplicate event_id/);assert.equal(f.sends,1)
 })
-console.log(JSON.stringify({status:'PASS',sdk:'0.8.1',tests:outcomes.length,outcomes,networkRequests:0,realBroadcasts:0,keysAccessed:false,scope:'SDK transport/ABI fixtures only; parent funded Tiramisu E2E remains required'}))
+await test('large estimates carry doubled headroom and oversized batches split before signing',async()=>{
+  const f=new Fixture();f.estimatePerOp=5_000_000n
+  await f.sink().writeBatch([record('a'),record('b'),record('c')])
+  assert.equal(f.sends,3)
+  for (const request of f.requests.filter(r=>r.method==='eth_sendTransaction')) {
+    assert.equal(BigInt((request.params as any[])[0].gas),10_000_000n)
+  }
+})
+await test('an estimate error or oversized single entity admits zero sends',async()=>{
+  const f=new Fixture();f.fault='estimate'
+  await assert.rejects(f.sink().write(record('estimate-error')))
+  assert.equal(f.sends,0)
+  f.fault=undefined;f.estimatePerOp=8_000_000n
+  await assert.rejects(f.sink().write(record('too-large')),/half/)
+  assert.equal(f.sends,0)
+})
+await test('head drift discards a complete reader scan and never returns partial rows',async()=>{
+  const f=new Fixture();await f.sink().writeBatch([record('a'),record('b')]);f.driftOnOffset=true
+  const reader=createArkivReader({chain,transport:f.transport})
+  await assert.rejects(reader.queryAll("sync = str('sync-a')",{owner:OWNER,maxResults:10,limit:1}),/Head changed/)
+})
+await test('maximum lifetime is refused before any request or send',async()=>{
+  const f=new Fixture()
+  await assert.rejects(f.sink().write({...record('lifetime'),expiresInSeconds:7_884_000*2}),/maxLifetime/)
+  assert.equal(f.requests.length,0)
+})
+console.log(JSON.stringify({status:'PASS',sdk:'1.0.0',tests:outcomes.length,outcomes,networkRequests:0,realBroadcasts:0,keysAccessed:false,scope:'SDK transport/ABI fixtures only; funded Rabdi E2E is separate'}))

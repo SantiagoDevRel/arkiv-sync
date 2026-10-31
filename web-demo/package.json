@@ -1,15 +1,18 @@
 {
   "name": "arkiv-sync-web-demo",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Hosted live demo for arkiv-sync — bounded, serverless, rate-limited. Source chain → Arkiv (Braga), streamed live.",
+  "description": "EVM-derived Arkiv entities on Rabdi with a server-side read proxy.",
   "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
   "engines": {
     "node": "22.x"
   },
   "dependencies": {
-    "arkiv-sync": "^0.2.0",
-    "@arkiv-network/sdk": "^0.6.8",
-    "viem": "^2.38.2"
+    "arkiv-sync": "file:vendor/arkiv-sync-1.0.0.tgz",
+    "@arkiv-network/sdk": "1.0.0",
+    "viem": "2.57.3"
   }
 }
