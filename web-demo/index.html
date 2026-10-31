@@ -88,7 +88,7 @@
   a.lnk { color:var(--orange); text-decoration:none; font-size:11px; white-space:nowrap; } a.lnk:hover { text-decoration:underline; }
   .empty { color:var(--dim); padding:18px 14px; }
   @media (max-width:900px) { .metrics { grid-template-columns:repeat(3,1fr); } main { height:auto; min-height:55vh; } }
-  @media (max-width:600px) { main { grid-template-columns:1fr; } .col { min-height:220px; } .f.grow { min-width:0; width:100%; } .bar { gap:10px; } .metric { padding:10px; } }
+  @media (max-width:600px) { main { grid-template-columns:1fr; } .col { min-height:220px; } .f.grow { flex:1 1 100%; min-width:0; width:100%; } .f > label { white-space:normal; } .f.grow input,.f.grow select { width:100%; } .bar { gap:10px; } .metric { padding:10px; } }
   .feed.ark .rowi { grid-template-columns:minmax(70px,auto) 52px minmax(0,1fr) auto auto; }
   .help,.col .sub { font-size:12px; }
 </style>
