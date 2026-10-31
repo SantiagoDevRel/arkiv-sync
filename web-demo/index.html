@@ -202,9 +202,8 @@ const $ = (id) => document.getElementById(id)
 // same-origin demo APIs and abuse the funded writer.
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const BLOCK_EXPLORER = 'https://rabdi.explorer.arkiv.network'
-const DATA_EXPLORER = 'https://rabdi.explorer.arkiv.network/entity-explorer'
-// Link by eventId (always present) — batched writes don't return per-entity keys.
-const entityUrl = (eventId) => `${DATA_EXPLORER}?query=${encodeURIComponent(`event_id = str('${eventId}')`)}`
+// SDK results include each entity key, so link directly to its verified explorer route.
+const entityUrl = (key) => `${BLOCK_EXPLORER}/entity/${encodeURIComponent(key)}`
 let events = 0, written = 0, srcRows = 0, arkRows = 0, writeTimes = [], writingTarget = 0, writingDone = 0, skips = 0, isRunning = false
 
 const short = (s, n=8) => s && s.length > n+4 ? s.slice(0,n)+'…'+s.slice(-4) : (s || '')
@@ -250,7 +249,7 @@ function onWrite(a) {
   const row = document.createElement('div'); row.className = 'rowi'
   const badge = `<span class="badge b-${esc(a.op)}">${esc(a.op)}</span>`
   const id = short(a.eventId, 14)
-  const verify = `<a class="lnk" href="${entityUrl(a.eventId)}" target="_blank" title="Open this Arkiv entity in the explorer">entity</a>`
+  const verify = a.key ? `<a class="lnk" href="${entityUrl(a.key)}" target="_blank" rel="noopener noreferrer" title="Open this Arkiv entity in the explorer">entity</a>` : '<span></span>'
   const tx = a.txHash ? `<a class="lnk" href="${BLOCK_EXPLORER}/tx/${encodeURIComponent(a.txHash)}" target="_blank" title="Open the confirmed transaction">tx</a>` : `<span></span>`
   row.innerHTML = `<span class="blk">#${esc(a.block)}</span>${badge}<span class="args" title="${esc(a.eventId)}">${esc(id)}</span>${verify}${tx}`
   feed.insertBefore(row, feed.firstChild); arkRows++
@@ -420,7 +419,7 @@ $('queryBtn').onclick = async () => {
     for (const row of j.rows) {
       const div = document.createElement('div'); div.className = 'rowi'
       const blk = (row.attributes && row.attributes.block) ?? '—', ev = (row.attributes && row.attributes.event) || ''
-      const verify = `<a class="lnk" href="${DATA_EXPLORER}?query=${encodeURIComponent('$key = key(' + row.key + ')')}" target="_blank" title="Open this Arkiv entity in the explorer">entity</a>`
+      const verify = `<a class="lnk" href="${entityUrl(row.key)}" target="_blank" rel="noopener noreferrer" title="Open this Arkiv entity in the explorer">entity</a>`
       div.innerHTML = `<span class="blk">#${esc(blk)}</span><span class="badge b-update">query</span><span class="args" title="${esc(row.key)}">${esc(ev)} · ${esc(short(row.key, 14))}</span>${verify}<span></span>`
       feed.appendChild(div)
     }
