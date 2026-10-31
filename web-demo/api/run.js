@@ -65,7 +65,7 @@ export default async function handler(req, res) {
     } catch {}
   }
 
-  if (process.env.ENABLE_DEMO_WRITES !== '1') return fail('This preview is read-only. Use the CLI for authorized indexing.')
+  if (process.env.ENABLE_DEMO_WRITES !== '1') return fail('This demo is read-only. Use the CLI for authorized indexing.')
   if (!ADDR_RE.test(contract)) return fail('Invalid contract address.')
   if (!event) return fail('Enter an event signature.')
   if (!SOURCE_CHAINS[chain]) return fail('Choose a supported source chain.')

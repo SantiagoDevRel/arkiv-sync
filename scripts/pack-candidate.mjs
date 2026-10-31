@@ -46,19 +46,16 @@ if (live) {
   const env = { ...process.env, PRIVATE_KEY: process.env.TEST_SYNC_PRIVATE_KEY, ARKIV_ACCESS_KEY: process.env.ARKIV_ACCESS_KEY_A }
   run('npm', ['run', 'verify'], target, env)
 }
-mkdirSync(path.join(root, 'web-demo/vendor'), { recursive: true })
-copyFileSync(runtime, path.join(root, 'web-demo/vendor/arkiv-sync-1.0.0.tgz'))
-// A mutable file dependency must be locked in a clean directory: npm can otherwise reuse
-// the previous archive's integrity even after the archive has changed at the same path.
+// The hosted demo consumes the exact published registry version independently of this pack.
 const web = path.join(clean, 'web')
-mkdirSync(path.join(web, 'vendor'), { recursive: true })
+mkdirSync(web, { recursive: true })
 copyFileSync(path.join(root, 'web-demo/package.json'), path.join(web, 'package.json'))
-copyFileSync(runtime, path.join(web, 'vendor/arkiv-sync-1.0.0.tgz'))
 run('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], web)
 run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], web)
 const webLock = JSON.parse(readFileSync(path.join(web, 'package-lock.json'), 'utf8'))
-assert.equal(webLock.packages['node_modules/arkiv-sync'].integrity,
-  'sha512-' + createHash('sha512').update(readFileSync(runtime)).digest('base64'))
+const registryDist = JSON.parse(execFileSync('npm', ['view', 'arkiv-sync@1.0.0', 'dist', '--json'], { encoding: 'utf8' }))
+assert.equal(webLock.packages['node_modules/arkiv-sync'].integrity, registryDist.integrity)
+assert.match(webLock.packages['node_modules/arkiv-sync'].resolved, /^https:\/\/registry\.npmjs\.org\//)
 copyFileSync(path.join(web, 'package-lock.json'), path.join(root, 'web-demo/package-lock.json'))
 copyFileSync(path.join(root, 'web-demo/build.mjs'), path.join(web, 'build.mjs'))
 copyFileSync(path.join(root, 'web-demo/index.html'), path.join(web, 'index.html'))

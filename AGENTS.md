@@ -1,6 +1,6 @@
 # arkiv-sync contributor and consumer guidance
 
-Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. This branch prepares version 1.0.0 against SDK 1.0.0; never infer registry publication from package metadata.
+Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.0 is published against SDK 1.0.0; verify exact registry versions rather than inferring availability from package metadata.
 
 Use Node 20 through 22. Run `npm install --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run lint`, `npm run build` and `npm pack --ignore-scripts`. Offline tests never sign. `npm run smoke` and scaffold `npm run verify` sign bounded live writes and need an authorized funded testnet account.
 

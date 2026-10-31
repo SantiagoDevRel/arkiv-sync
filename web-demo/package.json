@@ -11,7 +11,7 @@
     "node": "22.x"
   },
   "dependencies": {
-    "arkiv-sync": "file:vendor/arkiv-sync-1.0.0.tgz",
+    "arkiv-sync": "1.0.0",
     "@arkiv-network/sdk": "1.0.0",
     "viem": "2.57.3"
   }
