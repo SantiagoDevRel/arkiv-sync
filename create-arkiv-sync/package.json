@@ -1,6 +1,6 @@
 {
   "name": "create-arkiv-sync",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Scaffold a chain→Arkiv indexer in seconds (npm create arkiv-sync).",
   "type": "module",
   "bin": {
@@ -9,6 +9,8 @@
   "files": [
     "index.mjs",
     "template",
+    "README.md",
+    "CHANGELOG.md",
     "AGENTS.md",
     "CLAUDE.md"
   ],
