@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -161,6 +161,51 @@ await regression('P1 a completed operation with missing effects cannot falsely a
   f.rows.clear()
   await assert.rejects(f.sink().write(input), /new journal generation/)
   assert.equal(f.sends, 1)
+})
+await regression('P1 contradictory pending hash with zero attempts retains its durable lock', async () => {
+  const f = new Fixture(), directory = mkdtempSync(path.join(tmpdir(), 'sync-contradiction-'))
+  const input = record('contradictory-admission'), sink = f.sink({ journalDirectory: directory })
+  await sink.write(input)
+  const filename = path.join(directory, readdirSync(directory).find(name => name.startsWith('writes-'))!)
+  const saved = JSON.parse(readFileSync(filename, 'utf8'))
+  saved.entries[0].state = 'pending'; saved.entries[0].attempts = 0
+  writeFileSync(filename, JSON.stringify(saved))
+  const original = f.request.bind(f)
+  f.request = async (method, params) => method === 'eth_getTransactionReceipt' ? null : original(method, params)
+  f.rows.clear() // Temporary invisibility must not turn contradictory evidence into permission.
+  await assert.rejects(f.sink({ journalDirectory: directory }).write(input))
+  assert.equal(f.sends, 1)
+  const retained = JSON.parse(readFileSync(filename, 'utf8')).entries[0]
+  assert.equal(retained.state, 'pending'); assert.equal(retained.attempts, 0)
+  assert.equal(retained.txHash, saved.entries[0].txHash)
+})
+await regression('P2 returning to earlier content is a new durable operation', async () => {
+  const f = new Fixture(), directory = mkdtempSync(path.join(tmpdir(), 'sync-content-cycle-'))
+  for (const state of ['A', 'B', 'C', 'B']) await f.sink({ journalDirectory: directory }).write(record('content-cycle', { state }))
+  assert.equal(f.sends, 4)
+  assert.equal([...f.rows.values()][0]!.attributes.get('state')?.value, 'B')
+  for (const state of ['C', 'B']) await f.sink({ journalDirectory: directory }).write(record('content-cycle', { state }))
+  const history = await new FileWriteJournal(directory).entries(f.sink().identity)
+  assert.deepEqual(history.map(entry => entry.sequence), [1, 2, 3, 4, 5, 6])
+  assert.equal(new Set(history.map(entry => entry.id)).size, 6)
+  assert(history.every(entry => entry.state === 'confirmed' && entry.attempts === 1))
+  await f.sink({ journalDirectory: directory }).write(record('content-cycle', { state: 'B' }))
+  assert.equal(f.sends, 6, 'replay of the completed current state must skip')
+})
+await regression('P2 reorg removal and reappearance replay without duplicate sends', async () => {
+  const f = new Fixture(), directory = mkdtempSync(path.join(tmpdir(), 'sync-reorg-cycle-'))
+  const canonical = record('canonical', { block: 100 }), orphan = record('reappearing', { block: 101 })
+  await f.sink({ journalDirectory: directory }).writeBatch([canonical, orphan])
+  assert.equal(f.sends, 1)
+  for (let cycle = 0; cycle < 2; cycle++) {
+    assert.equal(await f.sink({ journalDirectory: directory }).reconcile(100n, 101n, new Set(['canonical']), { sync: 'sync-a' }), 1)
+    await f.sink({ journalDirectory: directory }).write(orphan)
+    const sends: number = f.sends
+    assert.equal((await f.sink({ journalDirectory: directory }).write(orphan)).op, 'skip')
+    assert.equal(await f.sink({ journalDirectory: directory }).reconcile(100n, 101n, new Set(['canonical', 'reappearing']), { sync: 'sync-a' }), 0)
+    assert.equal(f.sends, sends)
+  }
+  assert.equal(f.sends, 5); assert.equal(f.rows.size, 2)
 })
 console.log(JSON.stringify({ reviewRegressions: results }))
 if (results.some(result => result.status === 'FAIL')) process.exitCode = 1

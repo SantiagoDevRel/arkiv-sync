@@ -1,5 +1,7 @@
 # Changelog
 
+Journal corrections in the 1.0.0 review candidate: contradictory zero-attempt transaction evidence blocks writes; monotonic operation sequences allow legitimate content and reorg cycles without reusing historical attempt budgets.
+
 ## 1.0.0 (candidate)
 
 - Target SDK 1.0.0 and Rabdi with a required access key, schema-typed columns and per-column indexing.

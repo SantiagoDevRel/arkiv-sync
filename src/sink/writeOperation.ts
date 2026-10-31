@@ -35,7 +35,8 @@ export class WriteOperation<T extends { txHash: Hex }> {
     if (snapshot) {
       this.state = snapshot.state; this.attempts = snapshot.attempts; this.txHash = snapshot.txHash
       this.gas = snapshot.gas; this.nonce = snapshot.nonce; this.sdkAcknowledged = snapshot.sdkAcknowledged ?? false; this.result = snapshot.result
-      if (this.state === 'failed' && this.attempts === 0) this.state = 'idle' // unsigned preparation never admitted a wallet send
+      if (this.attempts === 0 && (this.txHash || this.sdkAcknowledged || this.result !== undefined)) this.state = 'uncertain'
+      else if (this.state === 'failed' && this.attempts === 0) this.state = 'idle' // unsigned preparation never admitted a wallet send
     }
   }
   private save(): Promise<void> {

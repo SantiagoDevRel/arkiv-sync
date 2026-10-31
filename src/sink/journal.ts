@@ -3,6 +3,7 @@ import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Hex } from 'viem'
 import type { WriteState } from './writeOperation.js'
+import { WriteReconciliationRequiredError } from './errors.js'
 
 export interface JournalTarget {
   kind: 'upsert' | 'delete' | 'extend'
@@ -15,6 +16,9 @@ export interface JournalTarget {
 }
 export interface JournalEntry {
   id: string
+  /** Content identifies the mutation; sequence distinguishes later legitimate transitions. */
+  fingerprint?: string
+  sequence?: number
   state: WriteState
   attempts: number
   txHash?: Hex
@@ -27,6 +31,13 @@ export interface JournalEntry {
 export interface WriteJournal {
   entries(namespace: string): Promise<JournalEntry[]>
   save(namespace: string, entry: JournalEntry): Promise<void>
+}
+
+export function assertJournalAdmission(entry: Pick<JournalEntry, 'state' | 'attempts' | 'txHash' | 'sdkAcknowledged' | 'result'>): void {
+  if (entry.attempts === 0 && (entry.txHash || entry.sdkAcknowledged || entry.result !== undefined ||
+      !['idle', 'sending', 'failed'].includes(entry.state))) {
+    throw new WriteReconciliationRequiredError('Contradictory journal admission: zero attempts with transaction evidence. Preserve the lock and reconcile by hash; never resend.', { txHash: entry.txHash })
+  }
 }
 
 /** Durable operation state beside the source checkpoint. Never contains signer/RPC secrets.
@@ -45,10 +56,14 @@ export class FileWriteJournal implements WriteJournal {
     for (const entry of parsed.entries) {
       if (!entry.id || !Number.isInteger(entry.attempts) || entry.attempts < 0 || entry.attempts > 2 || !Array.isArray(entry.targets) ||
           !['idle', 'sending', 'submitted', 'confirmed', 'pending', 'uncertain', 'failed', 'retryable'].includes(entry.state)) throw new Error('Invalid journal operation; refusing writes.')
+      if (entry.sequence !== undefined && (!Number.isSafeInteger(entry.sequence) || entry.sequence < 1)) throw new Error('Invalid journal sequence; refusing writes.')
+      if (entry.fingerprint !== undefined && !/^[a-f0-9]{64}$/.test(entry.fingerprint)) throw new Error('Invalid journal fingerprint; refusing writes.')
+      assertJournalAdmission(entry)
     }
     return parsed.entries
   }
   async save(namespace: string, entry: JournalEntry): Promise<void> {
+    assertJournalAdmission(entry)
     const entries = await this.entries(namespace)
     const index = entries.findIndex(value => value.id === entry.id)
     if (index < 0) entries.push(structuredClone(entry)); else entries[index] = structuredClone(entry)

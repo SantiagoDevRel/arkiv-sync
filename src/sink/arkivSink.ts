@@ -5,7 +5,7 @@ import { createRabdiNetwork, RABDI_CHAIN_ID, RABDI_EXPLORER_URL, RABDI_MAX_LIFET
 import { entitySchema, SYNC_SCHEMA_NAME } from './schema.js'
 import { GasBudgetError, prepareGas } from './gas.js'
 import { WriteOperation, WriteConfirmationError } from './writeOperation.js'
-import { FileWriteJournal, type WriteJournal, type JournalEntry, type JournalTarget } from './journal.js'
+import { FileWriteJournal, assertJournalAdmission, type WriteJournal, type JournalEntry, type JournalTarget } from './journal.js'
 import { randomSalt, type TxParams } from '@arkiv-network/sdk'
 
 import { addr, bytes, str, u64, type ArkivValue, type Attributes } from '@arkiv-network/sdk/schema'
@@ -210,6 +210,7 @@ export class ArkivSink implements Sink {
       if (target.kind === 'upsert') {
         const found = await this.findByEventId(target.eventId!, target.sync ? { sync: target.sync } : {})
         if (!found || found.contentHash !== target.contentHash || target.key && found.key !== target.key) return false
+        target.key ??= found.key
       } else {
         let entity
         try { entity = await this.pub.getEntity(target.key!) }
@@ -228,6 +229,7 @@ export class ArkivSink implements Sink {
   }
   private async recoverJournal(): Promise<void> {
     for (const entry of await this.journal.entries(this.identity)) {
+      assertJournalAdmission(entry) // Also protect caller-supplied journal implementations.
       if (entry.state === 'confirmed' || entry.state === 'failed' || entry.state === 'idle') continue
       if (entry.attempts === 0) { entry.state = 'idle'; await this.journal.save(this.identity, entry); continue }
       let receipt
@@ -244,25 +246,63 @@ export class ArkivSink implements Sink {
       throw new WriteReconciliationRequiredError('Durable operation remains pending/uncertain; reconcile its hash or lookup before any new write.', { txHash: entry.txHash })
     }
   }
+  private operationTargets(entry: JournalEntry): JournalTarget[] {
+    // Creates are the first targets, in SDK result order. This also reads older journals
+    // whose confirmed create targets did not yet retain their resulting entity keys.
+    const created = (entry.result as { createdEntities?: Hex[] } | undefined)?.createdEntities ?? []
+    return entry.targets.map((target, index) => target.kind === 'upsert' && !target.key && created[index]
+      ? { ...target, key: created[index] } : target)
+  }
   private async submit(params: ExecuteBatchParameters, override: TxParams = this.txParams) {
     await this.initialize()
-    const id = createHash('sha256').update(stableStringify({
+    const fingerprint = createHash('sha256').update(stableStringify({
       creates: params.creates?.map(value => ({ values: value.values, expiration: value.expiration })),
       patches: params.patches?.map(value => ({ key: value.entityKey, set: value.set, unset: value.unset })),
       deletes: params.deletes, extensions: params.extensions,
     })).digest('hex')
     const entries = await this.journal.entries(this.identity)
-    if (entries.some(entry => entry.id !== id && !['confirmed', 'failed', 'idle'].includes(entry.state))) {
+    const targets = this.targets(params)
+    const eventIdentity = (target: JournalTarget) => target.eventId === undefined ? undefined : stableStringify([target.sync, target.eventId])
+    const aliases = new Map<string, Set<Hex>>()
+    for (const old of entries.flatMap(entry => this.operationTargets(entry))) {
+      const identity = eventIdentity(old)
+      if (identity && old.key) {
+        const keys = aliases.get(identity) ?? new Set<Hex>()
+        keys.add(old.key); aliases.set(identity, keys)
+      }
+    }
+    const related = (left: JournalTarget, right: JournalTarget) => Boolean(
+      left.key && right.key && left.key === right.key ||
+      left.eventId && right.eventId && eventIdentity(left) === eventIdentity(right) ||
+      left.key && aliases.get(eventIdentity(right) ?? '')?.has(left.key) ||
+      right.key && aliases.get(eventIdentity(left) ?? '')?.has(right.key))
+    const ordinal = (entry: JournalEntry, index: number) => entry.sequence ?? index + 1
+    let latest: JournalEntry | undefined, latestSequence = 0, sequence = 0
+    for (const [index, entry] of entries.entries()) {
+      const value = ordinal(entry, index)
+      sequence = Math.max(sequence, value)
+      if (value > latestSequence && this.operationTargets(entry).some(old => targets.some(target => related(old, target)))) {
+        latest = entry; latestSequence = value
+      }
+    }
+    const previous = latest && (latest.fingerprint ?? latest.id) === fingerprint ? latest : undefined
+    if (entries.some(entry => entry.id !== previous?.id && !['confirmed', 'failed', 'idle'].includes(entry.state))) {
       throw new WriteReconciliationRequiredError('Another durable operation holds this signer; reconcile it first.')
     }
-    const entry: JournalEntry = entries.find(value => value.id === id) ?? { id, state: 'idle', attempts: 0, targets: this.targets(params) }
+    if (!Number.isSafeInteger(sequence + 1)) throw new Error('Journal sequence exhausted; reconcile before continuing.')
+    const entry: JournalEntry = previous ?? { id: `${fingerprint}:${sequence + 1}`, fingerprint, sequence: sequence + 1,
+      state: 'idle', attempts: 0, targets }
     if (entry.state === 'confirmed' && !await this.matchesTargets(entry)) {
       throw new WriteReconciliationRequiredError('A completed operation no longer has its expected effects. Verify expiration/reset and select a new journal generation before re-deriving.', { txHash: entry.txHash })
     }
     // Fixed salts ensure the SDK estimates exactly the bytes it will later sign.
     params = { ...params, creates: params.creates?.map(item => ({ ...item, salt: item.salt ?? randomSalt() })) }
     const operation = new WriteOperation<Awaited<ReturnType<WalletArkivClient['executeBatch']>>>(entry as any,
-      async snapshot => this.journal.save(this.identity, { ...entry, ...snapshot }))
+      async snapshot => {
+        const next = { ...entry, ...snapshot }
+        next.targets = this.operationTargets(next)
+        await this.journal.save(this.identity, next)
+      })
     this.activeOperation = operation
     try {
       return await operation.run({
