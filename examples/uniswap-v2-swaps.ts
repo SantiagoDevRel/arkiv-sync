@@ -20,7 +20,7 @@ const indexer = createIndexer(
       ],
       fromBlock: 'latest', // or a block number to backfill history
     },
-    ttlSeconds: days(7),
+    expirationSeconds: days(7),
     map: (e: NormalizedEvent) => ({
       attributes: {
         sender: addr(e.args.sender), // validates + lowercases (throws on a bad arg name)

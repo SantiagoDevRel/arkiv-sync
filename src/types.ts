@@ -12,7 +12,7 @@
  *                    because the configured Arkiv network will be decommissioned).
  */
 
-import type { ValueInput } from '@arkiv-network/sdk/attr'
+import type { ValueInput } from '@arkiv-network/sdk/schema'
 
 export type Hex = `0x${string}`
 
@@ -60,14 +60,14 @@ export interface SourceAdapter {
   preflight(): Promise<void>
 }
 
-/** What a Sink stores for one event. SDK0.8 scalars/tagged values are accepted. */
+/** What a Sink stores for one event. SDK1.0 scalars/tagged values are accepted. */
 export interface SinkRecord {
   eventId: string
   attributes: { key: string; value: ValueInput }[]
-  /** Decoded payload (JSON-serializable). */
-  payload: unknown
+  /** Decoded data (JSON-serializable). */
+  data: unknown
   contentType?: string
-  /** Requested lifetime in seconds; SDK0.8 requires a positive multiple of two. */
+  /** Requested lifetime in seconds; SDK1.0 requires a positive multiple of two. */
   expiresInSeconds: number
   /** On a changed existing entity, also extend to at least this lifetime from execution.
    * Default false: a patch never changes Entity Expiration and this option never shortens it. */
@@ -102,7 +102,7 @@ export interface Sink {
   /** Idempotent write: create if new, full-replace if the eventId exists and changed, else skip. */
   write(record: SinkRecord, onWritten?: WriteProgress): Promise<WriteResult>
   /**
-   * Optional batched write — one transaction for many records (huge throughput + cost win on
+   * Optional batched write — one transaction for many entities (huge throughput + cost win on
    * busy contracts). If absent, the indexer falls back to write() per record. `onWritten` fires per
    * record AS each batch commits, so a UI streams writes live instead of one burst at the end.
    */
@@ -110,12 +110,12 @@ export interface Sink {
   /** Remove the record for an orphaned event (used when a reorg drops a log). */
   delete(eventId: string, scope?: Record<string,string|number>): Promise<void>
   /**
-   * Optional reorg reconciliation: delete the sink's own records in block range [fromBlock,toBlock]
+   * Optional reorg reconciliation: delete the sink's own entities in block range [fromBlock,toBlock]
    * whose eventId is NOT in `keep` (the canonical set just re-derived). Returns how many were
    * deleted. This is what removes orphaned events after a reorg, at ANY depth. A sink that can't
    * support it (no block-range query) may omit it — the indexer warns that reorg cleanup is limited.
    *
-   * `scope` narrows deletion to THIS indexer's own records (e.g. `{ sync: cursorId }`), so two
+   * `scope` narrows deletion to THIS indexer's own entities (e.g. `{ sync: cursorId }`), so two
    * indexers sharing one wallet don't delete each other's entities in an overlapping block range.
    */
   reconcile?(
@@ -132,13 +132,13 @@ export interface Sink {
  * EventMapper: the only thing an app author writes per event — how to shape an entity.
  * Return null to SKIP an event. The indexer always adds the system attributes
  * (eventId, chainId, contract, event, block); `attributes` here are extra, queryable
- * fields (e.g. from/to for a Transfer). `data` overrides the stored payload (defaults to args).
+ * fields (e.g. from/to for a Transfer). `data` overrides the stored data (defaults to args).
  */
 export type MappedEntity = {
   attributes?: Record<string, ValueInput>
   data?: unknown
-  /** Override the default TTL for this specific event, in seconds. */
-  ttlSeconds?: number
+  /** Override the default Entity Expiration for this specific event, in seconds. */
+  expirationSeconds?: number
   /** Explicit changed-record Lifetime Extension; default false preserves existing deadline. */
   extendOnUpdate?: boolean
 } | null

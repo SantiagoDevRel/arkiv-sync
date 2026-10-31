@@ -30,7 +30,6 @@ export {
   ArkivSink,
   type ArkivSinkOptions,
   type ArkivNetwork,
-  TIRAMISU_NETWORK,
   assertWritableChain,
 } from './sink/arkivSink.js'
 export {
@@ -69,3 +68,9 @@ export type {
   Logger,
   LogLevel,
 } from './types.js'
+
+export { createRabdiNetwork, RABDI_CHAIN_ID, RABDI_EXPLORER_URL, RABDI_MAX_LIFETIME_BLOCKS } from './sink/network.js'
+export { WriteOperation, WriteConfirmationError, type WriteState } from './sink/writeOperation.js'
+export { prepareGas, encodeUnsignedBatch, GasBudgetError } from './sink/gas.js'
+export { SYNC_SCHEMA_NAME } from './sink/schema.js'
+export { FileWriteJournal, MemoryWriteJournal, type WriteJournal, type JournalEntry } from './sink/journal.js'

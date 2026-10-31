@@ -5,7 +5,9 @@ import { days } from './time.js'
 import { createLogger } from './log.js'
 import { EvmSource } from './source/evmSource.js'
 import { resolveSourceChain, type SourceChainDef } from './source/chains.js'
-import { ArkivSink, TIRAMISU_NETWORK, type ArkivNetwork } from './sink/arkivSink.js'
+import { ArkivSink, type ArkivNetwork } from './sink/arkivSink.js'
+import { createRabdiNetwork } from './sink/network.js'
+import type { TxParams } from '@arkiv-network/sdk'
 import { quoteValue } from './sink/predicate.js'
 import { createArkivReader, type DecodedEntity } from './sink/arkivQuery.js'
 import { FileCursorStore, MemoryCursorStore } from './core/cursor.js'
@@ -41,23 +43,27 @@ export interface ArkivSyncConfig {
     /** Your own RPC URL(s). If unset, a public pool with rotation is used. */
     rpcUrls?: string[]
   }
-  /** Default entity TTL in SECONDS — use the time helpers (e.g. days(30)). Default days(30). */
-  ttlSeconds?: number
+  /** Default Entity Expiration in SECONDS — use the time helpers (e.g. days(30)). Default days(30). */
+  expirationSeconds?: number
   /**
    * Map each event → entity. Return null to SKIP. Omit to index every event raw.
-   * `attributes` become queryable fields; `data` overrides the stored payload.
+   * `attributes` become queryable fields; `data` overrides the stored data.
    */
   map?: EventMapper
-  /** Override the sink. Default: SDK0.8.1 Tiramisu, signing locally with PRIVATE_KEY from env. */
+  /** Override the sink. Default: SDK 1.0.0 Rabdi, signing locally with PRIVATE_KEY from env. */
   sink?: Sink
-  /** Arkiv network the sink writes to (the SINK target — NOT the source chain). Default: Tiramisu testnet.
+  /** Arkiv network the sink writes to (the SINK target — NOT the source chain). Default: Rabdi testnet.
    *  When Arkiv mainnet launches, the swap is this one field (+ allowMainnet). */
   arkivNetwork?: ArkivNetwork
   /** Opt in to writing to a NON-testnet arkivNetwork (real funds). Default false (or ARKIV_ALLOW_MAINNET=1). */
   allowMainnet?: boolean
-  /** Records per executeBatch transaction. Default50 is a package policy; choose from actual
+  /** entities per executeBatch transaction. Default 50 is a package policy; choose from actual
    * encoded size, gas estimates, provider limits and authorized spend. No universal1000-op cap. */
   sinkBatchSize?: number
+  sinkTxParams?: TxParams
+  accessKey?: string
+  /** Shared durable operation journal; defaults to the FileCursorStore directory. */
+  journalDirectory?: string
   /** Cursor namespace label. Default: derived from the first contract address. */
   label?: string
   logger?: Logger
@@ -118,7 +124,7 @@ function buildSource(config: ArkivSyncConfig, logger: Logger): EvmSource {
   })
 }
 
-function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
+function buildSink(config: ArkivSyncConfig, logger: Logger, cursorStore?: CursorStore): Sink {
   if (config.sink) return config.sink
   const privateKey = process.env.PRIVATE_KEY
   if (!privateKey) {
@@ -129,6 +135,9 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
   }
   return new ArkivSink({
     privateKey,
+    accessKey: config.accessKey,
+    txParams: config.sinkTxParams,
+    journalDirectory: config.journalDirectory ?? (cursorStore instanceof FileCursorStore ? cursorStore.directory : undefined),
     rpcUrl: process.env.ARKIV_RPC_URL,
     logger,
     network: config.arkivNetwork,
@@ -143,7 +152,7 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
  */
 export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrides = {}): Indexer {
   const logger = config.logger ?? createLogger()
-  const sink = overrides.sink ?? buildSink(config, logger)
+  const sink = overrides.sink ?? buildSink(config, logger, overrides.cursorStore)
   const source = overrides.source ?? buildSource(config, logger)
   const map: EventMapper = config.map ?? (() => ({}))
   const label = config.label ?? normalizeAddresses(config.source.contract)[0]!
@@ -152,7 +161,7 @@ export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrid
     source,
     sink,
     map,
-    ttlSeconds: config.ttlSeconds ?? days(30),
+    expirationSeconds: config.expirationSeconds ?? days(30),
     cursorStore: overrides.cursorStore ?? new FileCursorStore(),
     logger,
     cursorLabel: label,
@@ -174,7 +183,7 @@ function computeConfigFingerprint(config: ArkivSyncConfig, sink: Sink): string {
   const contracts = normalizeAddresses(config.source.contract).slice().sort()
   const events = config.source.events.map((s) => s.trim()).slice().sort()
   const sinkNetwork = sink.identity ?? sink.name
-  return createHash('sha256').update(JSON.stringify({ storageVersion: 3, chain, contracts, events, sinkNetwork })).digest('hex').slice(0, 16)
+  return createHash('sha256').update(JSON.stringify({ storageVersion: 4, chain, contracts, events, sinkNetwork })).digest('hex').slice(0, 16)
 }
 
 export interface QuickCheckResult {
@@ -245,31 +254,34 @@ export async function quickCheck(
   })
   await indexer.init()
   let written = 0
+  let processed = 0
   for (let i = 0; i < 20; i++) {
     const r = await indexer.runOnce()
     written += r.written
+    processed += r.processed
     if (r.upToDate) break
   }
 
   const contract = normalizeAddresses(config.source.contract)[0]!
   const reader = createArkivReader({
     rpcUrl: process.env.ARKIV_RPC_URL,
-    chain: (config.arkivNetwork ?? TIRAMISU_NETWORK).chain,
+    accessKey: config.accessKey,
+    chain: (config.arkivNetwork ?? createRabdiNetwork(config.accessKey)).chain,
   })
-  const sample = await reader.query(`contract = ${quoteValue(contract)}`, {
+  const sample = await reader.query(`contract = ${quoteValue(contract)} AND sync = ${quoteValue(indexer.cursorId)} AND block = u64(${target})`, {
     owner: sink.address,
-    limit: 25,
+    limit: 100,
     sortBy: 'block',
     sortDir: 'desc',
   })
   const spent = await sink.spendReport()
 
-  const ok = written >= 1 && sample.length >= 1
+  const ok = processed >= 1 && sample.length >= processed
   const reason = ok
     ? undefined
-    : written === 0
-      ? `no events written — the contract + event signature matched nothing in block ${target}.`
-      : `wrote ${written} but the query returned 0 — the Arkiv index can lag briefly after a write; ` +
+    : processed === 0
+      ? `no events processed — the contract + event signature matched nothing in block ${target}.`
+      : `processed ${processed} but queried ${sample.length} — the Arkiv index can lag briefly after a write; ` +
         `re-query in a moment, and confirm you owner-scope to the indexer wallet.`
   return { ok, reason, window: target, written, queried: sample.length, sample, spent }
 }

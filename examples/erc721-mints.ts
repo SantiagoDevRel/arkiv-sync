@@ -18,7 +18,7 @@ const indexer = createIndexer(
       events: ['Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'],
       fromBlock: 'latest', // set a block number to backfill historical mints
     },
-    ttlSeconds: days(30),
+    expirationSeconds: days(30),
     map: (e: NormalizedEvent) => {
       if (addr(e.args.from) !== ZERO) return null // not a mint → SKIP (nothing is written)
       return {

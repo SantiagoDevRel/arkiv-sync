@@ -26,7 +26,6 @@ await build({
   ...common,
   entryPoints: ['src/bin/cli.ts'],
   outfile: 'dist/bin/cli.js',
-  banner: { js: '#!/usr/bin/env node' },
 })
 
 // Type declarations are part of the public contract; fail the build if they cannot be emitted.

@@ -15,7 +15,7 @@ export default defineConfig({
     fromBlock: 'latest',
     // confirmations defaults per-chain (Sepolia 6 · ETH 24 · Base 40 · BSC 75) — set a number to override
   },
-  ttlSeconds: days(30),
+  expirationSeconds: days(30),
   map: (e: NormalizedEvent) => ({
     // These become queryable attributes on the Arkiv entity.
     attributes: {
@@ -23,6 +23,6 @@ export default defineConfig({
       to: String(e.args.to).toLowerCase(),
       value: String(e.args.value), // uint256 → string (can exceed JS safe-int range)
     },
-    // The stored payload defaults to the full decoded event; we keep that here.
+    // The stored data defaults to the full decoded event; we keep that here.
   }),
 })

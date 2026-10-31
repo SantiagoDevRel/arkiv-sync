@@ -1,6 +1,6 @@
 /** Conservative raw-predicate helpers. Prefer SDK expressions for dynamic values. */
 
-import { addr, str } from '@arkiv-network/sdk/attr'
+import { addr, str } from '@arkiv-network/sdk/schema'
 import { eq } from '@arkiv-network/sdk/query'
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/

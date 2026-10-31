@@ -1,46 +1,11 @@
-# arkiv-sync — hosted live demo
+# Arkiv Sync hosted sample
 
-The shareable, always-on demo of [`arkiv-sync`](https://www.npmjs.com/package/arkiv-sync):
-point it at any contract on a built-in EVM chain and watch its events become a **queryable Arkiv
-database**, live. Deployed at **https://arkiv-indexer.vercel.app** (team `santiago-hobby`).
+Displays EVM-derived Arkiv entities on Rabdi through a server-only read proxy. The existing preview and production project is arkiv-indexer.
 
-> It **dogfoods the published npm package** — the serverless functions `import` from `arkiv-sync`
-> (not a local copy), so the demo is also a proof the package works as shipped.
+ARKIV_ACCESS_KEY is the server-side read key; ARKIV_DEMO_OWNER is the public signer address used by the idempotent seed. No private key is needed to read. The page queries the seeded Sepolia WETH contract automatically. Queries use indexed contract, chain_id and schema filters, owner scope and no-store responses.
 
-## Why this is a Vercel build, not the 24/7 worker
+The hosted demo is read-only. A separately authorized bounded writer requires ENABLE_DEMO_WRITES=1, ARKIV_WRITE_ACCESS_KEY and PRIVATE_KEY. Process-wide operation/nonce guards cannot coordinate serverless cold instances: use one continuous CLI worker per signer with durable storage. The browser retains operation state and never reconnects a write stream automatically.
 
-The library's normal mode is an infinite `start()` loop — that can't live on request-scoped
-serverless. So this demo runs a **bounded pass per request**: one `/api/run` call drives
-`runOnce()` until caught up **or** a hard budget hits (≈45s wall-clock under the 60s `maxDuration`,
-`MAX_WRITES`, `MAX_BACKFILL`, `maxEventsPerTick`), streaming each `onActivity` over SSE, then ends.
-No loop, nothing to leak. For a real 24/7 worker, run the library on a long-running host.
+The demo and scaffold use exact registry arkiv-sync 1.0.0 and SDK 1.0.0; viem is pinned exactly as well. No package archive is vendored. scripts/verify-registry-dgx.sh checks both published archive hashes, scaffolds from the packed registry package, installs and compiles the generated project, and builds the demo.
 
-## Endpoints
-
-| Route | What | Signs? |
-|---|---|---|
-| `GET /` | the split-screen UI (source events → Arkiv writes, live) | — |
-| `GET /api/chains` | built-in source chains for the selector | no |
-| `GET /api/abi?address=&chain=` | resolve event signatures (Sourcify, keyless) | no |
-| `GET /api/run?contract=&event=&chain=&mode=&backfillBlocks=` | **SSE** bounded index pass | yes (Braga) |
-| `GET /api/query?contract=&chain=` | **read-only** — query the derived DB back out (the headline verb) | no |
-
-## Safety / rate-limiting (it's a public URL with a funded testnet burner)
-
-- The burner `PRIVATE_KEY` lives **only** as a Vercel env var — never in the repo, never sent to the
-  browser, never uploaded (`.vercelignore` excludes `.env`). It signs **Braga testnet** writes only
-  (the library refuses any non-allowlisted / mainnet chain).
-- Per-run hard caps (time budget · max writes · max backfill depth · `maxEventsPerTick`) bound the
-  cost (testnet GLM, ~0) and runtime. Best-effort single-flight per warm instance avoids burner
-  nonce contention. A fully hardened public version would add a cross-instance rate-limit (KV) + an
-  auth gate on `/api/run` — documented follow-up, not built (this is a demo).
-
-## Deploy
-
-```bash
-# from this folder, linked to santiago-hobby/arkiv-indexer
-vercel env add PRIVATE_KEY production   # a funded Braga testnet burner (server-side only)
-vercel deploy --prod --yes --scope santiago-hobby
-```
-
-Node is pinned to `22.x` (never 24 — it hangs Arkiv updates). `vercel.json` sets `maxDuration: 60`.
+The existing static interface is retained to honor the no-new-dependencies constraint. .vercelignore excludes secrets. Node is pinned to 22. The read proxy requires no signing credentials. Verification details live in the lane report.
