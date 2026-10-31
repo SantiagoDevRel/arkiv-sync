@@ -7,8 +7,8 @@ import type { Cursor, CursorStore, Hex } from '../types.js'
  * stopped after a restart/crash — it persists the last processed block, a small window of
  * block hashes (for reorg detection), and any in-progress reorg recovery boundary.
  *
- * It's a derived artifact: deleting `.arkiv-sync/` just forces a re-index from the configured
- * start block. The chain remains the source of truth.
+ * Retain this directory across restarts: it also holds the durable write journal.
+ * Re-derivation must preserve unresolved operation hashes and attempt budgets.
  */
 export class FileCursorStore implements CursorStore {
   constructor(private readonly dir: string = '.arkiv-sync') {}

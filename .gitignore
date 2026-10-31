@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 
-# Local indexer state (cursor + seen-event cache). Safe to delete; rebuilt from chain.
+# Durable checkpoint and operation journal. Retain across restarts; never discard pending state.
 .arkiv-sync/
 
 # Build output

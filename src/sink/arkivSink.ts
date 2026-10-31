@@ -65,7 +65,7 @@ function normalizeKey(raw: string): Hex {
 type Existing = { key: Hex; contentHash?: string; attributes: Attributes; expiresAt: bigint }
 type Prepared = { record: SinkRecord; contentHash: string; attributes: Attributes; expires: ReturnType<typeof ExpirationTime.fromSeconds> }
 
-/** Source EVM logs -> mutable Arkiv derived entities. One instance has one exclusive writer queue. */
+/** Source EVM logs -> mutable Arkiv derived entities. Instances share one queue per signer/chain. */
 export class ArkivSink implements Sink {
   readonly name: string
   readonly identity: string
