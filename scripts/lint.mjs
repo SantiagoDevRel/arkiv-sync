@@ -8,7 +8,7 @@ for (const file of [...walk('scripts'), ...walk('web-demo/api'), 'web-demo/build
 }
 const current = ['README.md', 'AGENTS.md', 'CHANGELOG.md', 'skill/SKILL.md', 'skill/skill-lock.json',
   ...walk('examples'), ...walk('create-arkiv-sync/template'), 'web-demo/README.md', 'web-demo/index.html']
-const forbidden = /Tiramisu|Braga|7738577|60138453102|TTL|BTL|time-to-live|records|on Ethereum|payload|permanent/i
+const forbidden = /Tiramisu|Braga|7738577|60138453102|TTL|BTL|time-to-live|records|on Ethereum|pay[l]oad|permanent/i
 for (const file of current) {
   if (forbidden.test(readFileSync(file, 'utf8'))) throw new Error(`Outdated current guidance or vocabulary: ${file}`)
 }

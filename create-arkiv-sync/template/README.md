@@ -1,6 +1,6 @@
 # My Arkiv Sync indexer
 
-EVM contract events become public Arkiv entities on Rabdi, the Web3 database's DB-Chain testnet. Requires Node 20 through 22 and SDK 1.0.0.
+EVM contract events become public Arkiv entities on Rabdi, the Web3 database's DB-Chain testnet. Uses arkiv-sync 1.0.1. Requires Node 20 through 22 and SDK 1.0.0.
 
 Run `npm install --ignore-scripts`. Configure `.env` from `.env.example` with your locally held funded testnet `PRIVATE_KEY` and `ARKIV_ACCESS_KEY`. Get a free [access key](https://hub.arkiv.network/access-keys) and [testnet funds](https://hub.arkiv.network/faucet). Never paste credentials into prompts or commit them.
 

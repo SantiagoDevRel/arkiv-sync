@@ -1,6 +1,6 @@
 # arkiv-sync contributor and consumer guidance
 
-Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.0 is published against SDK 1.0.0; verify exact registry versions rather than inferring availability from package metadata.
+Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.1 targets SDK 1.0.0. Install `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
 
 Use Node 20 through 22. Run `npm install --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run lint`, `npm run build` and `npm pack --ignore-scripts`. Offline tests never sign. `npm run smoke` and scaffold `npm run verify` sign bounded live writes and need an authorized funded testnet account.
 
@@ -11,7 +11,7 @@ Preserve these invariants:
 - Index source head minus confirmations. Reorgs roll back to the ancestor, re-derive and remove only this worker's orphaned entities using `sink.reconcile`. Source RPC errors throw rather than pretending a block vanished.
 - Schema `arkiv_sync_v1` uses indexed system and scalar mapper columns. Names map to lowercase snake_case; reject collisions and reserved names. Rich JSON is stored in unindexed `data: bytes()`, never filtered directly. Exact big integers remain strings in DTOs.
 - `expirationSeconds` is a positive multiple of two seconds. Rabdi duration must be below 7,884,000 blocks. Changed entity patches explicitly unset old fields and preserve expiration; only `extendOnUpdate` adds Lifetime Extension. No unlimited lifetime.
-- Every write uses explicit gas/gasPrice and latest nonce. Encode with the SDK, estimate unsigned at latest, gas >= max(1,000,000, 2 ? estimate); never exceed half the head gas limit. Split batches before sending. Estimate failure stops admission; caller overrides cannot bypass ceilings.
+- Every write uses explicit gas/gasPrice and latest nonce. Encode with the SDK, estimate unsigned at latest, gas >= max(1_000_000, 2 * estimate); never exceed half the head gas limit. Split batches before sending. Estimate failure stops admission; caller overrides cannot bypass ceilings.
 - Preserve one WriteOperation per user operation. SDK success stores submitted(hash) before receipt lookup and never sends again. Null/disagreeing lookup means pending. Uncertain errors block. Retry once only for SDK-confirmed revert plus authoritative reverted receipt with gasUsed == sent gas, with fresh latest estimate and doubled gas within half-block ceiling. Preserve hashes and a durable input/progress journal before restarting.
 - One exclusive writer per account/process. Coordinate other processes separately; batch size is a policy, not a measured capacity promise.
 - Every reader is owner-scoped and schema-scoped with injection-safe predicates. SDK 1 uses head-only offset pages, max 100. Complete bounded scans abort on block drift, duplicate keys or bounds; no partial cleanup. Sort client-side; do not add orderBy.
@@ -29,3 +29,4 @@ Admission and consumed attempts are fsynced before broadcast. The wallet transpo
 All instances share a process-wide queue by chain and signer address. Across processes or deployments use one writer per key; this journal is not a distributed lock. A verified chain reset or expired completed operation requires an explicit new journal generation before re-derivation: retain the old journal and do not silently clear its attempt history. Public preview writes remain off.
 
 Operation identities combine content with a monotonically increasing journal sequence. Returning to earlier content after a confirmed transition or reorg is a new operation; replaying the current state still skips. Historical attempts remain immutable. Transaction evidence with zero attempts is contradictory: preserve the lock and reconcile by hash, never resend.
+

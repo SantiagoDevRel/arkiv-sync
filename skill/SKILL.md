@@ -12,7 +12,7 @@ metadata:
 
 # Arkiv Sync
 
-Use the library runtime to derive public Arkiv entities from confirmed EVM logs. Arkiv is the Web3 database; the source chain remains canonical. Read the installed package README and AGENTS.md before wiring its config. This recipe targets the 1.0.0 candidate: check registry availability before installing a fixed version.
+Use the library runtime to derive public Arkiv entities from confirmed EVM logs. Arkiv is the Web3 database; the source chain remains canonical. Read the installed package README and AGENTS.md before wiring its config. This recipe targets arkiv-sync 1.0.1: install `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
 
 Ask for source chain/RPC, contract and exact indexed event signatures, backfill range, confirmation policy, a locally configured funded Rabdi testnet signer and an access key. Obtain keys at https://hub.arkiv.network/access-keys and testnet funds at https://hub.arkiv.network/faucet. Never request secret values in chat. `MissingAccessKeyError` must produce the helpful Hub link; do not silently use anonymous RPCs.
 
@@ -38,7 +38,7 @@ The named schema `arkiv_sync_v1` declares typed indexed system and scalar mapper
 
 Every read requires an owner. Use typed SDK literals and `quoteValue`; never interpolate raw user input. SDK 1.0 pages by offset at the head, at most 100 entities per page. `queryAll` requires maxResults, aborts on head drift/duplicate keys/bounds and sorts client-side. Do not add orderBy. No historical snapshot pinning is available; narrow large scans instead of returning incomplete data.
 
-Every write uses explicit gas/gasPrice and nonce at latest. Encode through the SDK, unsigned-estimate at latest, choose gas >= max(1,000,000, 2 ? estimate), split batches until gas <= half the head gas limit, and stop on estimate errors. The library does this for public APIs, including per-write txParams overrides. Never guess a near-block-limit gas budget.
+Every write uses explicit gas/gasPrice and nonce at latest. Encode through the SDK, unsigned-estimate at latest, choose gas >= max(1_000_000, 2 * estimate), split batches until gas <= half the head gas limit, and stop on estimate errors. The library does this for public APIs, including per-write txParams overrides. Never guess a near-block-limit gas budget.
 
 Keep one WriteOperation state instance for each operation across clicks/re-renders: guard sending before network calls. SDK success stores submitted(hash) before looking up its receipt; no subsequent outcome may resend. Null/disagreeing lookup is confirmation pending, with hash. Uncertain errors require checking before retrying. Only an SDK-confirmed revert plus an authoritative reverted receipt with gasUsed == sent gas can retry once; re-estimate latest and double gas within the half-block ceiling. All other reverts terminate. Preserve the hash and durable input/progress journal; reconcile before restart.
 

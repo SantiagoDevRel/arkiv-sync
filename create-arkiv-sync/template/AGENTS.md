@@ -1,6 +1,6 @@
 # Consumer guidance
 
-This project uses arkiv-sync 1.0.0 with SDK 1.0.0 and Rabdi. Use Node 20 through 22, `npm install --ignore-scripts`, `npm run typecheck`, `npm run verify`, then `npm start`. Verification signs real testnet writes.
+This project uses arkiv-sync 1.0.1 with SDK 1.0.0 and Rabdi. Use Node 20 through 22, `npm install --ignore-scripts`, `npm run typecheck`, `npm run verify`, then `npm start`. Verification signs real testnet writes.
 
 Ask for source chain/RPC, contract/event signatures, block range and confirmation policy; a locally configured funded testnet signer; and an access key from https://hub.arkiv.network/access-keys. Fund the address at https://hub.arkiv.network/faucet. Keep credentials outside Git, prompts, logs and browser bundles. Missing access keys fail closed.
 
@@ -10,7 +10,7 @@ Configure expirationSeconds as a positive multiple of two seconds, shorter than 
 
 Reads require owner scope, typed literals and quoteValue. query is one page; queryAll bounds pages and fails on head drift, duplicate keys or budget overflow. Sort client-side; never add orderBy. Rabdi only serves head state: use latest, never safe/finalized/old hashes.
 
-The library unsigned-estimates each write at latest, sends explicit gas >= max(1,000,000, 2 ? estimate), explicit gasPrice/latest nonce and splits batches below half the block gas limit. Keep a single writer and coordinate any external process. Caller txParams cannot bypass gas safety limits.
+The library unsigned-estimates each write at latest, sends explicit gas >= max(1_000_000, 2 * estimate), explicit gasPrice/latest nonce and splits batches below half the block gas limit. Keep a single writer and coordinate any external process. Caller txParams cannot bypass gas safety limits.
 
 Keep one WriteOperation per operation across clicks. SDK success/hash is terminal for sending even when the later receipt is null/disagrees. Uncertain errors stop. A retry is allowed once only for SDK-confirmed revert with authoritative reverted receipt whose gasUsed equals the sent gas; re-estimate and double gas within half-block ceiling. WriteReconciliationRequiredError halts the worker: preserve hash and durable input/progress journal, authenticate receipt/readback and reconcile before restart.
 
@@ -25,3 +25,5 @@ Admission and consumed attempts are fsynced before broadcast. The wallet transpo
 All instances share a process-wide queue by chain and signer address. Across processes or deployments use one writer per key; this journal is not a distributed lock. A verified chain reset or expired completed operation requires an explicit new journal generation before re-derivation: retain the old journal and do not silently clear its attempt history. Public preview writes remain off.
 
 Operation identities combine content with a monotonically increasing journal sequence. Returning to earlier content after a confirmed transition or reorg is a new operation; replaying the current state still skips. Historical attempts remain immutable. Transaction evidence with zero attempts is contradictory: preserve the lock and reconcile by hash, never resend.
+
+The current exact registry dependency is published. New patch preparation does not authorize changing its pin, starting the writer or signing a verification transaction.

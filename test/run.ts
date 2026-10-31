@@ -1,3 +1,4 @@
+import './vocabulary-guard.test.mjs';
 /**
  * Unit tests — deterministic, no network. A mock SOURCE (a controllable in-memory chain) +
  * a memory SINK exercise the hard correctness: dedup/idempotency, restart-resume, and reorg

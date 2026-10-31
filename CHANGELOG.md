@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- Clarify versioned runtime installation and archive verification; guard source-map metadata.
+
+> Historical version entries below are preserved as recorded; use README.md for the current release.
+
 Journal corrections in the 1.0.0 review candidate: contradictory zero-attempt transaction evidence blocks writes; monotonic operation sequences allow legitimate content and reorg cycles without reusing historical attempt budgets.
 
 ## 1.0.0 (candidate)

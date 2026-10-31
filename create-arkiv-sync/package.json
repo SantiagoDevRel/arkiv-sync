@@ -1,6 +1,6 @@
 {
   "name": "create-arkiv-sync",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Scaffold a chain→Arkiv indexer in seconds (npm create arkiv-sync).",
   "type": "module",
   "bin": {
