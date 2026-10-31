@@ -10,7 +10,7 @@ Configure expirationSeconds as a positive multiple of two seconds, shorter than 
 
 Reads require owner scope, typed literals and quoteValue. query is one page; queryAll bounds pages and fails on head drift, duplicate keys or budget overflow. Sort client-side; never add orderBy. Rabdi only serves head state: use latest, never safe/finalized/old hashes.
 
-The library unsigned-estimates each write at latest, sends explicit gas >= max(1,000,000, 2 ? estimate), explicit gasPrice/latest nonce and splits batches below half the block gas limit. Keep a single writer and coordinate any external process. Caller txParams cannot bypass gas safety limits.
+The library unsigned-estimates each write at latest, sends explicit gas >= max(1_000_000, 2 * estimate), explicit gasPrice/latest nonce and splits batches below half the block gas limit. Keep a single writer and coordinate any external process. Caller txParams cannot bypass gas safety limits.
 
 Keep one WriteOperation per operation across clicks. SDK success/hash is terminal for sending even when the later receipt is null/disagrees. Uncertain errors stop. A retry is allowed once only for SDK-confirmed revert with authoritative reverted receipt whose gasUsed equals the sent gas; re-estimate and double gas within half-block ceiling. WriteReconciliationRequiredError halts the worker: preserve hash and durable input/progress journal, authenticate receipt/readback and reconcile before restart.
 

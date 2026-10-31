@@ -78,3 +78,45 @@ test('dated historical allowances require exact file and content hash', () => {
     assert.ok(violations(entry.file, original + '\n' + ('pay' + 'load')).length);
   }
 });
+
+test('Markdown operator mutations fail while real code ternaries remain valid', () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), 'markdown-operators-'));
+  const cli = path.join(root, 'scripts/vocabulary-guard.mjs');
+  const run = () => spawnSync(process.execPath, [cli, fixture], { encoding: 'utf8' });
+  const mutations = [
+    ['README.md', 'Gas: `max(1_000_000, 2 ? estimate)`.'],
+    ['AGENTS.md', 'Choose gas >= max(1,000,000, 2 ? estimate).'],
+    ['create-arkiv-sync/template/AGENTS.md', 'Gas >= max(1,000,000, 2 ? estimate).'],
+    ['skill/SKILL.md', 'Gas >= max(1,000,000, 2 ? estimate).'],
+    ['docs/operators.md', 'Index `head ? confirmations`.'],
+    ['README.md', '`sending` ? `submitted(hash)` ? confirmed.'],
+    ['docs/operators.md', 'left ? right'],
+    ['README.md', '```ts\nconst gas = 2 ? estimate;\n```'],
+  ];
+  const valid = [
+    'Gas: `max(1_000_000, 2 * estimate)`; index `head - confirmations`.',
+    '`sending` -> `submitted(hash)` -> confirmed. Ready?',
+    '```ts\nconst value = ready ? left : right;\n```',
+    'Use `ready ? left : right`.',
+    '```js\nconst value = enabled ? (ready ? left : right) : fallback;\nconst row = ready ? { value: 1 } : { value: 0 };\n```',
+    '```ts\nconst value = ready ? left\n  : right;\n```',
+    '```js\nconst delimiter = " ? ";\nconst text = "left ? right";\n```',
+  ];
+  try {
+    for (const [file, content] of mutations) {
+      const target = path.join(fixture, file);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, content);
+      const result = run();
+      assert.equal(result.status, 1, content);
+      assert.match(result.stderr, /ambiguous question-mark operator/);
+      writeFileSync(target, 'Valid guidance.');
+      assert.equal(run().status, 0);
+    }
+    for (const content of valid) {
+      writeFileSync(path.join(fixture, 'README.md'), content);
+      assert.equal(run().status, 0, content);
+    }
+    console.log(JSON.stringify({ operatorMutation: true, rejected: mutations.length, validCases: valid.length, realTernariesPreserved: true }));
+  } finally { rmSync(fixture, { recursive: true }); }
+});

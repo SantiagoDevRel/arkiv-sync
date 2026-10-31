@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { markdownOperatorViolations } from './markdown-operators.mjs';
 
 const term = 'pay' + 'load';
 const forbidden = new RegExp(term, 'gi');
@@ -84,7 +85,7 @@ export function checkTree(root) {
         if (data.includes(0)) continue;
         let text;
         try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data); } catch { continue; }
-        findings.push(...violations(relative, text));
+        findings.push(...markdownOperatorViolations(relative, text), ...violations(relative, text));
       }
     }
   }

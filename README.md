@@ -47,11 +47,11 @@ Every read requires an owner and includes the schema tag. Use typed SDK literals
 
 ## Write safety and Entity Expiration
 
-Every create, patch, Lifetime Extension and reorg cleanup is encoded through the actual SDK before an unsigned estimate at `latest`. A failed estimate stops admission. Gas is at least `max(1_000_000, 2 ? estimate)` with explicit `gasPrice` and a nonce read at `latest`. Batches split before broadcast until gas is at most half the head block limit; an oversized single entity fails. `sinkBatchSize` is a batching policy, not a throughput guarantee.
+Every create, patch, Lifetime Extension and reorg cleanup is encoded through the actual SDK before an unsigned estimate at `latest`. A failed estimate stops admission. Gas is at least `max(1_000_000, 2 * estimate)` with explicit `gasPrice` and a nonce read at `latest`. Batches split before broadcast until gas is at most half the head block limit; an oversized single entity fails. `sinkBatchSize` is a batching policy, not a throughput guarantee.
 
 `ArkivSinkOptions.txParams`, `config.sinkTxParams` and the third argument of `sink.write(entity, onWritten, txParams)` / `writeBatch` allow caller overrides. Gas safety floors and ceilings remain enforced. Nonce overrides belong to one coordinated operation; do not reuse one across multiple batches. Only legacy `gasPrice` overrides are accepted on Rabdi.
 
-An operation keeps a `WriteOperation` instance across calls: `sending` ? `submitted(hash)` ? confirmed or confirmation pending. SDK success never re-enters the send path, even if a subsequent receipt lookup is null or disagrees. Uncertain transport failures stop writes. A confirmed reverted SDK error may retry **once**, only after authoritative receipt gas usage equals the sent gas limit, and a fresh estimate plus doubled gas still fits the half-block ceiling. All other reverts stop. Preserve any hash and reconcile before restarting; a new process does not prove an old write failed. The default file journal persists operation state beside the checkpoint; preserve its durable volume across restarts.
+An operation keeps a `WriteOperation` instance across calls: `sending` -> `submitted(hash)` -> confirmed or confirmation pending. SDK success never re-enters the send path, even if a subsequent receipt lookup is null or disagrees. Uncertain transport failures stop writes. A confirmed reverted SDK error may retry **once**, only after authoritative receipt gas usage equals the sent gas limit, and a fresh estimate plus doubled gas still fits the half-block ceiling. All other reverts stop. Preserve any hash and reconcile before restarting; a new process does not prove an old write failed. The default file journal persists operation state beside the checkpoint; preserve its durable volume across restarts.
 
 `expirationSeconds` and `SinkRecord.expiresInSeconds` use positive multiples of two seconds, nominally converted to blocks. Rabdi's maximum lifetime is 7,884,000 blocks; this library requires a shorter duration. Patches preserve existing Entity Expiration unless `extendOnUpdate: true` explicitly adds Lifetime Extension. Entities needing a longer life must be extended before expiration. There is no unlimited lifetime or erasure guarantee.
 
@@ -61,7 +61,7 @@ Troubleshooting: `arkiv serves state at the chain head only` means use `latest`,
 
 - Identity is `chainId:txHash:logIndex`; a full SHA256 content hash makes unchanged replays skip writes.
 - Atomic persisted checkpoints refuse an incompatible configuration, writer or schema. Keep the cursor directory across restarts.
-- Index only `head ? confirmations`. Reorgs roll back to an ancestor, re-derive and reconcile owner/schema/sync-scoped orphans. Transient source RPC failures remain failures, never synthetic reorgs.
+- Index only `head - confirmations`. Reorgs roll back to an ancestor, re-derive and reconcile owner/schema/sync-scoped orphans. Transient source RPC failures remain failures, never synthetic reorgs.
 - Writers serialize within one sink instance. Coordinate processes using the same signer separately.
 - Source RPC limits, deep reorgs beyond the retained window and index visibility lag remain operational constraints. Entity Expiration can remove a derived view even while its cursor is caught up; reseeding/rebuilding needs an explicit source range.
 
