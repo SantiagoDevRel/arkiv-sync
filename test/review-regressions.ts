@@ -58,7 +58,8 @@ await regression('P2 actual packed CLI parses and provides help', async () => {
   execFileSync('npm', ['pack', '--ignore-scripts', '--pack-destination', directory], { stdio: 'pipe',
     env: { ...process.env, npm_config_offline: 'true', npm_config_update_notifier: 'false' } })
   const unpacked = path.join(directory, 'unpacked'); mkdirSync(unpacked)
-  execFileSync('tar', ['-xzf', path.join(directory, 'arkiv-sync-1.0.0.tgz'), '-C', unpacked])
+  const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+  execFileSync('tar', ['-xzf', path.join(directory, `arkiv-sync-${version}.tgz`), '-C', unpacked])
   const cli = path.join(unpacked, 'package/dist/bin/cli.js')
   execFileSync(process.execPath, ['--check', cli], { stdio: 'pipe' })
   // Dependency resolution is certified again after clean installation by pack-candidate.mjs.

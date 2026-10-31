@@ -37,3 +37,5 @@ node /absolute/path/to/create-arkiv-sync/index.mjs my-indexer --local /absolute/
 Read the generated `README.md` and `AGENTS.md` before running writes. The [arkiv-sync README](https://github.com/SantiagoDevRel/arkiv-sync#readme) documents the exact APIs, owner-scoped reads, schema, Entity Expiration and Lifetime Extension, gas estimation and durable recovery. [arkiv-sync on npm](https://www.npmjs.com/package/arkiv-sync) is the runtime library; this package only scaffolds its consumer project.
 
 Rabdi serves state at the chain head only: use `latest` rather than old block hashes, `safe` or `finalized`. For a revert at the gas limit, retain the transaction evidence and follow the library's gas estimation and bounded retry guidance; successful or uncertain submissions must never be resent automatically.
+
+Published baseline: create-arkiv-sync@1.0.1. This branch prepares documentation patch 1.0.2; do not install it from npm until publication. The scaffold retains arkiv-sync@1.0.0 until the phase-2 pin update.

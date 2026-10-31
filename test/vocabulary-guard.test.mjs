@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkTree } from '../scripts/vocabulary-guard.mjs';
+import { checkTree, violations } from '../scripts/vocabulary-guard.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 test('complete tree uses current vocabulary, including generated files', () => {
   assert.deepEqual(checkTree(root), []);
@@ -27,4 +27,22 @@ test('guard CLI rejects injected mixed-case vocabulary in every surface', () => 
       assert.equal(run().status, 0);
     }
   } finally { rmSync(fixture, { recursive: true }); }
+});
+
+// Exceptions must never authorize source prose or new generated variants.
+test('third-party exceptions cannot escape their exact generated scope', () => {
+  const list = JSON.parse(readFileSync(path.join(root, 'vocabulary-exceptions.json'), 'utf8'));
+  for (const entry of list) {
+    assert.ok(violations('sample/src/injected.ts', entry.literal).length);
+    assert.ok(violations('dist/index.js', entry.literal).length);
+    assert.ok(violations(entry.paths[0].slice(0,-2)+'mutation.js', 'new '+('pay'+'load')+' variant').length);
+  }
+});
+test('temporary waiver rejects the same term elsewhere and altered blobs', () => {
+  const list = JSON.parse(readFileSync(path.join(root, 'vocabulary-waivers.json'), 'utf8'));
+  for (const entry of list) {
+    assert.ok(violations('sample/src/another.ts', entry.literal).length);
+    const original = readFileSync(path.join(root,entry.file),'utf8');
+    assert.ok(violations(entry.file, original+'\n// '+('pay'+'load')).length);
+  }
 });

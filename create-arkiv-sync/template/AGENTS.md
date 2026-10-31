@@ -25,3 +25,5 @@ Admission and consumed attempts are fsynced before broadcast. The wallet transpo
 All instances share a process-wide queue by chain and signer address. Across processes or deployments use one writer per key; this journal is not a distributed lock. A verified chain reset or expired completed operation requires an explicit new journal generation before re-derivation: retain the old journal and do not silently clear its attempt history. Public preview writes remain off.
 
 Operation identities combine content with a monotonically increasing journal sequence. Returning to earlier content after a confirmed transition or reorg is a new operation; replaying the current state still skips. Historical attempts remain immutable. Transaction evidence with zero attempts is contradictory: preserve the lock and reconcile by hash, never resend.
+
+The current exact registry dependency is published. New patch preparation does not authorize changing its pin, starting the writer or signing a verification transaction.

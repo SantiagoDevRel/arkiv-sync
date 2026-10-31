@@ -1,3 +1,4 @@
+// Historical 1.0.0 artifact verification only; current patch validation uses the manifest version and separate phase-1 evidence.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
