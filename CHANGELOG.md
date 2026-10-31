@@ -9,3 +9,11 @@
 - Estimate unsigned writes at latest, enforce doubled gas headroom and a half-block ceiling, split oversized batches and check receipts. Persistent operation states block uncertain or already successful resubmission; only a proven gas-exhausted revert can retry once.
 - Bound Entity Expiration below Rabdi's maximum lifetime. Patches preserve expiration; explicit Lifetime Extension remains available.
 - Update the scaffolder and hosted sample. Release and production promotion are separate gates.
+
+### Review corrections
+
+- Persist operation admission, attempt budgets and broadcast hashes beside checkpoints; recover by receipt/readback without blind resend.
+- Share an in-process signer queue; multiple processes must use one writer per key.
+- Read the latest nonce after a confirmed gas-exhausted revert, including when the first attempt used an override.
+- Apply removal-only and new-state replacement patches atomically without exceeding the schema attribute limit.
+- Ship one CLI shebang and verify the installed packed CLI with --check and --help.

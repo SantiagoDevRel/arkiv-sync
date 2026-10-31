@@ -41,6 +41,7 @@ export async function prepareGas(pub: PublicArkivClient, account: Account, batch
   if (gas > head.gasLimit / 2n) throw new GasBudgetError('Write exceeds half the head block gas limit; split the batch or reduce entity size.')
   if (override.maxFeePerGas !== undefined || override.maxPriorityFeePerGas !== undefined) throw new Error('Rabdi writes require an explicit legacy gasPrice.')
   const gasPrice = override.gasPrice ?? await evm.getGasPrice()
-  const nonce = override.nonce ?? await pub.getTransactionCount({ address: account.address, blockTag: 'latest' })
+  const nonce = previousGas !== undefined ? await pub.getTransactionCount({ address: account.address, blockTag: 'latest' }) :
+    override.nonce ?? await pub.getTransactionCount({ address: account.address, blockTag: 'latest' })
   return { gas, gasPrice, nonce }
 }

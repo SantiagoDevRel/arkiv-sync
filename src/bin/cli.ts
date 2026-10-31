@@ -46,6 +46,10 @@ async function findConfig(): Promise<string> {
 }
 
 async function main() {
+  if (process.argv.includes('--help') || process.argv.includes('-h')) {
+    console.log('Usage: arkiv-sync [path/to/arkiv.config.js]\nIndex confirmed EVM events into Arkiv entities.\nConfigure a local testnet signer and access key before starting.')
+    return
+  }
   dotenv.config({ quiet: true })
 
   const configPath = await findConfig()

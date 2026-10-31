@@ -73,3 +73,4 @@ export { createRabdiNetwork, RABDI_CHAIN_ID, RABDI_EXPLORER_URL, RABDI_MAX_LIFET
 export { WriteOperation, WriteConfirmationError, type WriteState } from './sink/writeOperation.js'
 export { prepareGas, encodeUnsignedBatch, GasBudgetError } from './sink/gas.js'
 export { SYNC_SCHEMA_NAME } from './sink/schema.js'
+export { FileWriteJournal, MemoryWriteJournal, type WriteJournal, type JournalEntry } from './sink/journal.js'

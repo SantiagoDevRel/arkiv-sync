@@ -5,11 +5,12 @@ import { createRabdiNetwork, RABDI_CHAIN_ID, RABDI_EXPLORER_URL, RABDI_MAX_LIFET
 import { entitySchema, SYNC_SCHEMA_NAME } from './schema.js'
 import { GasBudgetError, prepareGas } from './gas.js'
 import { WriteOperation, WriteConfirmationError } from './writeOperation.js'
+import { FileWriteJournal, type WriteJournal, type JournalEntry, type JournalTarget } from './journal.js'
 import { randomSalt, type TxParams } from '@arkiv-network/sdk'
 
 import { addr, bytes, str, u64, type ArkivValue, type Attributes } from '@arkiv-network/sdk/schema'
 import { and, eq, gte, lte, type Expression } from '@arkiv-network/sdk/query'
-import { formatEther, http, type Account, type Chain, type Transport } from 'viem'
+import { custom, formatEther, http, type Account, type Chain, type Transport } from 'viem'
 import type { Hex, Logger, Sink, SinkRecord, WriteProgress, WriteResult } from '../types.js'
 import { bigintReplacer, stableStringify, short, scrubSecrets } from '../util.js'
 import { normalizeAttributes, storageAttributeName } from './attributes.js'
@@ -17,6 +18,10 @@ import { WriteReconciliationRequiredError } from './errors.js'
 
 export type { ArkivNetwork } from './network.js'
 const KNOWN_MAINNETS = new Set([1, 10, 25, 56, 100, 137, 204, 250, 324, 1101, 1284, 5000, 8453, 34443, 42161, 42220, 43114, 59144, 81457, 534352, 7777777, 1313161554])
+// Symbol registry also coordinates multiple loaded copies of this package in one process.
+const queueSymbol = Symbol.for('arkiv-sync.signer-queues.v1')
+const registry = globalThis as typeof globalThis & { [queueSymbol]?: Map<string, Promise<unknown>> }
+const signerQueues = registry[queueSymbol] ??= new Map<string, Promise<unknown>>()
 
 export interface ArkivSinkOptions {
   /** Supply exactly one local key or caller-owned account. Never put a key in chat/logs. */
@@ -24,6 +29,10 @@ export interface ArkivSinkOptions {
   accessKey?: string
   /** Per-write overrides may raise gas; safety floors and the half-block ceiling always apply. */
   txParams?: TxParams
+  /** Durable journal directory, shared by every instance using this signer. Default .arkiv-sync. */
+  journalDirectory?: string
+  /** Custom durable store; MemoryWriteJournal is explicitly for tests only. */
+  journal?: WriteJournal
   account?: Account
   rpcUrl?: string
   /** Optional custom transport, including a caller's authenticated server transport. */
@@ -69,9 +78,10 @@ export class ArkivSink implements Sink {
   private readonly wallet: WalletArkivClient
   private readonly account: Account
   private readonly log: Logger
+  private readonly journal: WriteJournal
+  private activeOperation?: WriteOperation<Awaited<ReturnType<WalletArkivClient['executeBatch']>>>
   private writes = 0
   private startBalance = 0n
-  private writeChain: Promise<unknown> = Promise.resolve()
   private initialized = false
   private blocked?: WriteReconciliationRequiredError
 
@@ -86,19 +96,36 @@ export class ArkivSink implements Sink {
     this.maxScanRows = positivePolicy(opts.maxScanRows, 10_000, 'maxScanRows')
     this.name = this.network.name
     this.identity = `arkiv:${this.network.chain.id}:${this.account.address.toLowerCase()}:storage4`
+    this.journal = opts.journal ?? new FileWriteJournal(opts.journalDirectory)
     const transport = opts.transport ?? http(opts.rpcUrl, { retryCount: 0, fetchOptions: { cache: 'no-store' } })
     this.pub = createPublicClient({ chain: this.network.chain, transport })
-    this.wallet = createWalletClient({ chain: this.network.chain, account: this.account, transport })
+    this.wallet = createWalletClient({ chain: this.network.chain, account: this.account,
+      transport: custom({ request: async request => {
+        if ((request.method === 'eth_sendTransaction' || request.method === 'eth_sendRawTransaction') && !this.activeOperation) throw new Error('No durable operation admission for wallet broadcast.')
+        const result = await this.pub.transport.request(request as any)
+        if (request.method === 'eth_sendTransaction' || request.method === 'eth_sendRawTransaction') {
+          if (!this.activeOperation) throw new Error('No durable operation admission for wallet broadcast.')
+          await this.activeOperation.broadcast(result as Hex)
+        }
+        return result
+      } }, { retryCount: 0 }) })
   }
   get address(): Hex { return this.account.address }
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const result = this.writeChain.then(fn, fn)
-    this.writeChain = result.then(() => undefined, () => undefined)
+    const queueKey = `${this.network.chain.id}:${this.address.toLowerCase()}`
+    const result = (signerQueues.get(queueKey) ?? Promise.resolve()).then(fn, fn)
+    const tail = result.then(() => undefined, () => undefined)
+    signerQueues.set(queueKey, tail)
+    void tail.then(() => { if (signerQueues.get(queueKey) === tail) signerQueues.delete(queueKey) })
     return result
   }
   async init(): Promise<void> {
+    return this.runExclusive(() => this.initialize())
+  }
+  private async initialize(): Promise<void> {
     if (this.blocked) throw this.blocked
     assertWritableChain(await this.pub.getChainId(), this.network, this.allowMainnet)
+    await this.recoverJournal()
     if (this.initialized) return
     this.startBalance = await this.pub.getBalance({ address: this.address })
     if (this.startBalance === 0n) throw new Error(`Wallet ${short(this.address)} has zero balance on ${this.name}; fund it with the network gas token.`)
@@ -156,14 +183,87 @@ export class ArkivSink implements Sink {
   }
   private replacement(prepared: Prepared, existing: Existing): NonNullable<ExecuteBatchParameters['patches']> {
     const old = Object.fromEntries(Object.entries(existing.attributes).filter(([name]) => name !== 'arkiv.schema'))
-    return [{ schema: entitySchema({ ...old, ...prepared.attributes }), entityKey: existing.key, set: prepared.attributes,
-      unset: Object.keys(old).filter(name => !Object.hasOwn(prepared.attributes, name)) }]
+    const removed = Object.fromEntries(Object.entries(old).filter(([name]) => !Object.hasOwn(prepared.attributes, name)))
+    // Each valid state fits independently. An unnamed removal schema avoids building their
+    // over-limit union; both patches still execute atomically in one SDK batch.
+    return [
+      ...(Object.keys(removed).length ? [{ schema: entitySchema(removed, false), entityKey: existing.key, unset: Object.keys(removed) }] : []),
+      { schema: entitySchema(prepared.attributes), entityKey: existing.key, set: prepared.attributes },
+    ]
+  }
+  private targets(params: ExecuteBatchParameters): JournalTarget[] {
+    const targets: JournalTarget[] = []
+    const upsert = (values: any, key?: Hex) => {
+      if (values?.event_id?.type !== 'str' || values?.content_hash?.type !== 'str') throw new Error('Write lacks durable event identity/content hash.')
+      targets.push({ kind: 'upsert', key, eventId: values.event_id.value, contentHash: values.content_hash.value,
+        sync: values.sync?.type === 'str' ? values.sync.value : undefined })
+    }
+    for (const value of params.creates ?? []) upsert(value.values)
+    for (const value of params.patches ?? []) if (value.set?.content_hash) upsert(value.set, value.entityKey)
+    for (const value of params.deletes ?? []) targets.push({ kind: 'delete', key: value.entityKey })
+    for (const value of params.extensions ?? []) targets.push({ kind: 'extend', key: value.entityKey,
+      minLifetime: value.expiration.minLifetime.toString(), expiresAt: value.expiration.expiresAt.toString() })
+    return targets
+  }
+  private async matchesTargets(entry: JournalEntry, receiptBlock?: bigint): Promise<boolean> {
+    for (const target of entry.targets) {
+      if (target.kind === 'upsert') {
+        const found = await this.findByEventId(target.eventId!, target.sync ? { sync: target.sync } : {})
+        if (!found || found.contentHash !== target.contentHash || target.key && found.key !== target.key) return false
+      } else {
+        let entity
+        try { entity = await this.pub.getEntity(target.key!) }
+        catch (error) {
+          if (target.kind === 'delete' && (error as Error).name === 'NoEntityFoundError') continue
+          throw error
+        }
+        if (target.kind === 'delete') return false
+        if (!receiptBlock || entity.$owner?.toLowerCase() !== this.address.toLowerCase()) return false
+        const floor = receiptBlock + BigInt(target.minLifetime!)
+        const absolute = BigInt(target.expiresAt!)
+        if (entity.$expiresAt < (floor > absolute ? floor : absolute)) return false
+      }
+    }
+    return entry.targets.length > 0
+  }
+  private async recoverJournal(): Promise<void> {
+    for (const entry of await this.journal.entries(this.identity)) {
+      if (entry.state === 'confirmed' || entry.state === 'failed' || entry.state === 'idle') continue
+      if (entry.attempts === 0) { entry.state = 'idle'; await this.journal.save(this.identity, entry); continue }
+      let receipt
+      if (entry.txHash) {
+        try { receipt = await this.pub.getTransactionReceipt({ hash: entry.txHash }) }
+        catch { /* a failed lookup never authorizes resubmission */ }
+        if (entry.state === 'retryable' && !entry.sdkAcknowledged && entry.attempts === 1 &&
+            receipt?.status === 'reverted' && receipt.gasUsed === BigInt(entry.gas!)) continue
+      }
+      if ((!entry.txHash || receipt?.status === 'success' && receipt.transactionHash.toLowerCase() === entry.txHash.toLowerCase() && receipt.from.toLowerCase() === this.address.toLowerCase()) &&
+          await this.matchesTargets(entry, receipt?.blockNumber)) {
+        entry.state = 'confirmed'; await this.journal.save(this.identity, entry); continue
+      }
+      throw new WriteReconciliationRequiredError('Durable operation remains pending/uncertain; reconcile its hash or lookup before any new write.', { txHash: entry.txHash })
+    }
   }
   private async submit(params: ExecuteBatchParameters, override: TxParams = this.txParams) {
-    await this.init()
+    await this.initialize()
+    const id = createHash('sha256').update(stableStringify({
+      creates: params.creates?.map(value => ({ values: value.values, expiration: value.expiration })),
+      patches: params.patches?.map(value => ({ key: value.entityKey, set: value.set, unset: value.unset })),
+      deletes: params.deletes, extensions: params.extensions,
+    })).digest('hex')
+    const entries = await this.journal.entries(this.identity)
+    if (entries.some(entry => entry.id !== id && !['confirmed', 'failed', 'idle'].includes(entry.state))) {
+      throw new WriteReconciliationRequiredError('Another durable operation holds this signer; reconcile it first.')
+    }
+    const entry: JournalEntry = entries.find(value => value.id === id) ?? { id, state: 'idle', attempts: 0, targets: this.targets(params) }
+    if (entry.state === 'confirmed' && !await this.matchesTargets(entry)) {
+      throw new WriteReconciliationRequiredError('A completed operation no longer has its expected effects. Verify expiration/reset and select a new journal generation before re-deriving.', { txHash: entry.txHash })
+    }
     // Fixed salts ensure the SDK estimates exactly the bytes it will later sign.
     params = { ...params, creates: params.creates?.map(item => ({ ...item, salt: item.salt ?? randomSalt() })) }
-    const operation = new WriteOperation<Awaited<ReturnType<WalletArkivClient['executeBatch']>>>()
+    const operation = new WriteOperation<Awaited<ReturnType<WalletArkivClient['executeBatch']>>>(entry as any,
+      async snapshot => this.journal.save(this.identity, { ...entry, ...snapshot }))
+    this.activeOperation = operation
     try {
       return await operation.run({
         prepare: previousGas => prepareGas(this.pub, this.account, params, override, previousGas),
@@ -181,7 +281,7 @@ export class ArkivSink implements Sink {
       this.blocked = new WriteReconciliationRequiredError('Arkiv write requires reconciliation; further writes are stopped.',
         { cause, txHash: operation.txHash ?? (cause instanceof WriteConfirmationError ? cause.txHash : undefined) })
       throw this.blocked
-    }
+    } finally { this.activeOperation = undefined }
   }
   async write(record: SinkRecord, onWritten?: WriteProgress, txParams?: TxParams): Promise<WriteResult> {
     return (await this.writeBatch([record], onWritten, txParams))[0]!
@@ -193,7 +293,7 @@ export class ArkivSink implements Sink {
     const outcomes = new Map<string, WriteResult>()
     await this.runExclusive(async () => {
       if (this.blocked) throw this.blocked
-      await this.init()
+      await this.initialize()
       const existing = new Map<string, Existing>()
       const firstSync = prepared[0]!.attributes.sync
       const scoped = firstSync?.type === 'str' && prepared.every(p => p.attributes.sync?.type === 'str' && p.attributes.sync.value === firstSync.value && p.attributes.block?.type === 'u64')
@@ -252,20 +352,20 @@ export class ArkivSink implements Sink {
           }
           throw error
         }
-        if (result.createdEntities.length !== creates.length || result.patchedEntities.length !== updates.length || result.extendedEntities.length !== extensions.length) {
+        if (result.createdEntities.length !== creates.length || result.patchedEntities.length !== params.patches!.length || result.extendedEntities.length !== extensions.length) {
           this.blocked = new WriteReconciliationRequiredError('Successful batch returned unmatched key counts; preserve txHash and reconcile.', { txHash: result.txHash })
           throw this.blocked
         }
-        const expectedUpdates = updates.map(p => existing.get(p.record.eventId)!.key)
+        const expectedUpdates = params.patches!.map(p => p.entityKey)
         if (result.patchedEntities.some((key,index) => key !== expectedUpdates[index])) {
           this.blocked = new WriteReconciliationRequiredError('Successful batch returned unmatched patch identities; reconcile.', { txHash: result.txHash })
           throw this.blocked
         }
-        let ci=0,ui=0
+        let ci=0
         this.writes += chunk.length
         for (const p of chunk) {
           const updating = existing.has(p.record.eventId)
-          const value: WriteResult = { op: updating ? 'update' : 'create', key: updating ? result.patchedEntities[ui++] : result.createdEntities[ci++], txHash: result.txHash }
+          const value: WriteResult = { op: updating ? 'update' : 'create', key: updating ? existing.get(p.record.eventId)!.key : result.createdEntities[ci++], txHash: result.txHash }
           outcomes.set(p.record.eventId, value)
           try { onWritten?.({ eventId: p.record.eventId, ...value }) }
           catch (cause) {

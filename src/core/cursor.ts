@@ -12,6 +12,8 @@ import type { Cursor, CursorStore, Hex } from '../types.js'
  */
 export class FileCursorStore implements CursorStore {
   constructor(private readonly dir: string = '.arkiv-sync') {}
+  /** Used by the default sink to keep its durable operation journal beside the checkpoint. */
+  get directory(): string { return this.dir }
 
   private file(id: string): string {
     const safe = id.replace(/[^a-zA-Z0-9_.-]/g, '_')

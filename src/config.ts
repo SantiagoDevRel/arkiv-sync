@@ -62,6 +62,8 @@ export interface ArkivSyncConfig {
   sinkBatchSize?: number
   sinkTxParams?: TxParams
   accessKey?: string
+  /** Shared durable operation journal; defaults to the FileCursorStore directory. */
+  journalDirectory?: string
   /** Cursor namespace label. Default: derived from the first contract address. */
   label?: string
   logger?: Logger
@@ -122,7 +124,7 @@ function buildSource(config: ArkivSyncConfig, logger: Logger): EvmSource {
   })
 }
 
-function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
+function buildSink(config: ArkivSyncConfig, logger: Logger, cursorStore?: CursorStore): Sink {
   if (config.sink) return config.sink
   const privateKey = process.env.PRIVATE_KEY
   if (!privateKey) {
@@ -135,6 +137,7 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
     privateKey,
     accessKey: config.accessKey,
     txParams: config.sinkTxParams,
+    journalDirectory: config.journalDirectory ?? (cursorStore instanceof FileCursorStore ? cursorStore.directory : undefined),
     rpcUrl: process.env.ARKIV_RPC_URL,
     logger,
     network: config.arkivNetwork,
@@ -149,7 +152,7 @@ function buildSink(config: ArkivSyncConfig, logger: Logger): Sink {
  */
 export function createIndexer(config: ArkivSyncConfig, overrides: IndexerOverrides = {}): Indexer {
   const logger = config.logger ?? createLogger()
-  const sink = overrides.sink ?? buildSink(config, logger)
+  const sink = overrides.sink ?? buildSink(config, logger, overrides.cursorStore)
   const source = overrides.source ?? buildSource(config, logger)
   const map: EventMapper = config.map ?? (() => ({}))
   const label = config.label ?? normalizeAddresses(config.source.contract)[0]!

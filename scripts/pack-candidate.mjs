@@ -19,6 +19,11 @@ const target = path.join(clean, 'scaffold')
 const cli = path.join(clean, 'node_modules/create-arkiv-sync/index.mjs')
 run(process.execPath, [cli, target, '--local', runtime, '--install'], clean)
 run('npm', ['run', 'typecheck'], target)
+const packedCli = path.join(target, 'node_modules/arkiv-sync/dist/bin/cli.js')
+run(process.execPath, ['--check', packedCli], target)
+const help = execFileSync(process.execPath, [packedCli, '--help'], { cwd: target, encoding: 'utf8' })
+assert.match(help, /Usage:/)
+console.log('PASS packed runtime CLI --check and --help')
 run(process.execPath, ['--input-type=module', '-e', `
   import assert from 'node:assert/strict';
   import { createArkivReader, createIndexer, WriteOperation, RABDI_CHAIN_ID } from 'arkiv-sync';
@@ -82,5 +87,5 @@ try {
 } finally { globalThis.fetch = originalFetch }
 const hashes = Object.fromEntries([runtime, scaffolder].map(file => [path.basename(file), createHash('sha256').update(readFileSync(file)).digest('hex')]))
 writeFileSync(path.join(artifacts, live ? 'packed-live.json' : 'packed-offline.json'), JSON.stringify({ status: 'PASS', node: process.version,
-  hashes, scaffoldTypecheck: true, cleanConsumer: true, nonemptyTargetRefused: true, live }, null, 2) + '\n')
+  hashes, scaffoldTypecheck: true, cleanConsumer: true, packedCli: true, nonemptyTargetRefused: true, live }, null, 2) + '\n')
 console.log(JSON.stringify({ status: 'PASS', hashes, scaffoldTypecheck: true, cleanConsumer: true, live }))

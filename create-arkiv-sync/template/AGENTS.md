@@ -15,3 +15,11 @@ The library unsigned-estimates each write at latest, sends explicit gas >= max(1
 Keep one WriteOperation per operation across clicks. SDK success/hash is terminal for sending even when the later receipt is null/disagrees. Uncertain errors stop. A retry is allowed once only for SDK-confirmed revert with authoritative reverted receipt whose gasUsed equals the sent gas; re-estimate and double gas within half-block ceiling. WriteReconciliationRequiredError halts the worker: preserve hash and durable input/progress journal, authenticate receipt/readback and reconcile before restart.
 
 Public text is English: Arkiv entities, the Web3 database, DB-Chain, Entity Expiration and Lifetime Extension. See installed library README for exact APIs.
+
+## Durable write recovery
+
+The default sink uses FileWriteJournal beside the checkpoint in .arkiv-sync/. createIndexer also follows a custom FileCursorStore directory; journalDirectory selects another durable directory. Preserve and share this journal across every restart and sink instance using the key. A writable durable volume is required; an ephemeral serverless filesystem is insufficient. MemoryWriteJournal is an explicit test-only alternative.
+
+Admission and consumed attempts are fsynced before broadcast. The wallet transport fsyncs a returned hash before the SDK polls its receipt; SDK success/result is persisted before the separate confirmation lookup. On startup, pending operations reconcile against their hash/receipt and owned entity lookup. Missing/uncertain evidence blocks new writes; it never means resubmit. A confirmed gas-exhausted retry consumes the latest chain nonce, regardless of the original nonce override. The maximum attempt count survives restarts.
+
+All instances share a process-wide queue by chain and signer address. Across processes or deployments use one writer per key; this journal is not a distributed lock. A verified chain reset or expired completed operation requires an explicit new journal generation before re-derivation: retain the old journal and do not silently clear its attempt history. Public preview writes remain off.

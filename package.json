@@ -28,7 +28,7 @@
   "scripts": {
     "start": "tsx src/bin/cli.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "test": "tsx test/run.ts && tsx test/sdk08.ts && tsx test/missing-key-no-network.ts && tsx test/write-operation.ts",
+    "test": "tsx test/run.ts && tsx test/review-regressions.ts && tsx test/missing-key-no-network.ts && tsx test/write-operation.ts",
     "typecheck": "tsc --noEmit",
     "build": "node build.mjs",
     "lint": "node scripts/lint.mjs"

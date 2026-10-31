@@ -9,12 +9,13 @@ import { createArkivReader } from '../src/sink/arkivQuery.js'
 import { storageAttributeName } from '../src/sink/attributes.js'
 import { WriteReconciliationRequiredError } from '../src/sink/errors.js'
 import { silentLogger } from '../src/log.js'
+import { MemoryWriteJournal } from '../src/sink/journal.js'
 import type { SinkRecord } from '../src/types.js'
 
-const OWNER='0x00000000000000000000000000000000000000aa' as const
+export const OWNER='0x00000000000000000000000000000000000000aa' as const
 const OTHER='0x00000000000000000000000000000000000000bb' as const
 const NATIVE='0x4400000000000000000000000000000000000044' as const
-const chain=defineChain({id:7794095,name:'Rabdi fixture',nativeCurrency:{name:'Fixture',symbol:'TEST',decimals:18},rpcUrls:{default:{http:['http://fixture.invalid']}},testnet:true})
+export const chain=defineChain({id:7794095,name:'Rabdi fixture',nativeCurrency:{name:'Fixture',symbol:'TEST',decimals:18},rpcUrls:{default:{http:['http://fixture.invalid']}},testnet:true})
 const network:ArkivNetwork={chain,name:'fixture:rabdi',isTestnet:true}
 const EXECUTE=parseAbi(['function execute((uint8 operation,bytes operationData)[] ops) returns(bytes32[] keys)'])
 const ATTR='(bytes32 name,uint8 typeId,bytes value)[]'
@@ -30,14 +31,16 @@ type Row={key:Hex;owner:Hex;creator:Hex;expiresAt:bigint;attributes:Map<string,{
 const TYPES:Record<number,{tag:string;abi:string}>={1:{tag:'bool',abi:'bool'},2:{tag:'i32',abi:'int32'},3:{tag:'u64',abi:'uint64'},4:{tag:'u256',abi:'uint256'},5:{tag:'dec',abi:'int256'},6:{tag:'bytes32',abi:'bytes32'},7:{tag:'bytes',abi:'bytes'},8:{tag:'str',abi:'string'},9:{tag:'addr',abi:'address'},10:{tag:'key',abi:'bytes32'}}
 const hash=(s:string) => ('0x'+createHash('sha256').update(s).digest('hex')) as Hex
 const quantity=(n:bigint|number) => ('0x'+BigInt(n).toString(16)) as Hex
-class Fixture {
+export class Fixture {
+  journal = new MemoryWriteJournal()
   rows=new Map<Hex,Row>(); receipts=new Map<Hex,unknown>(); head=100n; chainId=7794095; sends=0
   requests:Array<{method:string;params:unknown}>=[]
   batches:number[][]=[]; pageSize=200; fault?:'cursor'|'broadcast'|'decode'|'estimate'; queryOwner?:Hex
   estimatePerOp=0n; driftOnOffset=false
   advanceHeadOnSend=false
   transport=custom({request:async ({method,params}) => this.request(method,params)}, {retryCount:0})
-  sink(opts:Partial<ConstructorParameters<typeof ArkivSink>[0]>={}) {return new ArkivSink({account:{address:OWNER,type:'json-rpc'},network,logger:silentLogger,transport:this.transport,...opts})}
+  sink(opts:Partial<ConstructorParameters<typeof ArkivSink>[0]>={}) {return new ArkivSink({account:{address:OWNER,type:'json-rpc'},network,logger:silentLogger,transport:this.transport,
+    journal: opts.journalDirectory ? undefined : this.journal, ...opts})}
   private cells(row:Row,cells:readonly Cell[]) {
     for (const cell of cells) {
       const name=new TextDecoder().decode(hexToBytes(cell.name)).replace(/\0+$/,'')
@@ -137,7 +140,7 @@ class Fixture {
     throw new Error(`Unimplemented fixture RPC ${method}; no network fallback`)
   }
 }
-function record(id:string,attrs:Record<string,any>={},sync='sync-a'):SinkRecord {
+export function record(id:string,attrs:Record<string,any>={},sync='sync-a'):SinkRecord {
   return {eventId:id,attributes:Object.entries({eventId:id,chainId:11155111,block:9007199254740993n,sync,...attrs}).map(([key,value])=>({key,value})),data:{message:id,value:9007199254740995n},expiresInSeconds:120}
 }
 const outcomes:Array<{name:string;status:string}>=[]
@@ -186,7 +189,7 @@ await test('replacement unsets removed attrs and preserves expiry by default',as
   await sink.write(record('a',{keep:'after'}))
   const row=f.rows.get(first.key as Hex)!
   assert(!row.attributes.has('old_field'));assert.equal(row.attributes.get('keep')!.value,'after')
-  assert.equal(row.expiresAt,160n);assert.deepEqual(f.batches[1],[2])
+  assert.equal(row.expiresAt,160n);assert.deepEqual(f.batches[1],[2,2])
 })
 await test('explicit extension is atomic with replacement and never shorter',async()=>{
   const f=new Fixture(),sink=f.sink();const first=await sink.write(record('a'))

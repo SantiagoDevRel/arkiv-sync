@@ -45,3 +45,11 @@ Keep one WriteOperation state instance for each operation across clicks/re-rende
 Entity Expiration uses positive multiples of two seconds. Rabdi lifetime must be shorter than 7,884,000 blocks; longer-lived entities require Lifetime Extension before expiration. Never promise an unlimited lifetime. Testnet resets require idempotent reseeding from a fixed source range.
 
 Troubleshoot `arkiv serves state at the chain head only` by reading latest instead of safe/finalized/old hashes. A revert at exactly the gas limit needs estimate/headroom and the bounded retry rule above. Keep access keys server-side for shared read proxies; browser wallet writers use their own configured RPC. AI integrations use the phrase "ephemeral coordination state".
+
+## Durable write recovery
+
+The default sink uses FileWriteJournal beside the checkpoint in .arkiv-sync/. createIndexer also follows a custom FileCursorStore directory; journalDirectory selects another durable directory. Preserve and share this journal across every restart and sink instance using the key. A writable durable volume is required; an ephemeral serverless filesystem is insufficient. MemoryWriteJournal is an explicit test-only alternative.
+
+Admission and consumed attempts are fsynced before broadcast. The wallet transport fsyncs a returned hash before the SDK polls its receipt; SDK success/result is persisted before the separate confirmation lookup. On startup, pending operations reconcile against their hash/receipt and owned entity lookup. Missing/uncertain evidence blocks new writes; it never means resubmit. A confirmed gas-exhausted retry consumes the latest chain nonce, regardless of the original nonce override. The maximum attempt count survives restarts.
+
+All instances share a process-wide queue by chain and signer address. Across processes or deployments use one writer per key; this journal is not a distributed lock. A verified chain reset or expired completed operation requires an explicit new journal generation before re-derivation: retain the old journal and do not silently clear its attempt history. Public preview writes remain off.
