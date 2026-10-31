@@ -46,3 +46,35 @@ test('temporary waiver rejects the same term elsewhere and altered blobs', () =>
     assert.ok(violations(entry.file, original+'\n// '+('pay'+'load')).length);
   }
 });
+
+test('every source-map string field rejects an unlisted term through the CLI', () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), 'bytes-map-mutation-'));
+  const marker = 'pay' + 'load_UNLISTED';
+  const file = path.join(fixture, 'dist/audit-injection.js.map');
+  mkdirSync(path.dirname(file), { recursive: true });
+  const variants = [
+    { names: [marker] }, { sources: [marker] }, { file: marker }, { sourceRoot: marker },
+    { sources: ['input.ts'], sourcesContent: [marker] }, { extension: { nested: [marker] } },
+    { [marker]: 'safe' },
+  ];
+  try {
+    for (const variant of variants) {
+      writeFileSync(file, JSON.stringify({ version: 3, sources: [], sourcesContent: [], names: [], mappings: '', ...variant }));
+      const result = spawnSync(process.execPath, [path.join(root, 'scripts/vocabulary-guard.mjs'), fixture], { encoding: 'utf8' });
+      assert.equal(result.status, 1, JSON.stringify(variant));
+      assert.match(result.stderr, /use binary data or a bytes column/);
+    }
+    writeFileSync(file, JSON.stringify({ version: 3, sources: [], sourcesContent: [], names: ['safe'], mappings: '' }));
+    assert.equal(spawnSync(process.execPath, [path.join(root, 'scripts/vocabulary-guard.mjs'), fixture]).status, 0);
+    console.log(JSON.stringify({ sourceMapMutation: true, stringFields: variants.length, rejected: true }));
+  } finally { rmSync(fixture, { recursive: true }); }
+});
+test('dated historical allowances require exact file and content hash', () => {
+  const entries = JSON.parse(readFileSync(path.join(root, 'vocabulary-history.json'), 'utf8'));
+  for (const entry of entries) {
+    const original = readFileSync(path.join(root, entry.file), 'utf8');
+    assert.deepEqual(violations(entry.file, original), []);
+    assert.ok(violations('docs/unlisted-history.md', original).length);
+    assert.ok(violations(entry.file, original + '\n' + ('pay' + 'load')).length);
+  }
+});

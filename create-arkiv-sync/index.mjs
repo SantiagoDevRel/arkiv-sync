@@ -2,11 +2,11 @@
 /**
  * create-arkiv-sync — scaffold a chain→Arkiv indexer.
  *
- *   npm create arkiv-sync@latest my-indexer
+ *   npm create arkiv-sync@1.0.2 my-indexer
  *   # or:  node index.mjs <dir> [--local <path-to-arkiv-sync-tgz-or-dir>] [--install]
  *
  * Copies the template, names the project, and (optionally) installs. `--local` points the
- * arkiv-sync dependency at a local tarball/dir (used to test an unpublished build).
+ * arkiv-sync dependency at a local tarball/dir (used for isolated archive checks).
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'

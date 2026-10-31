@@ -1,6 +1,6 @@
 # arkiv-sync contributor and consumer guidance
 
-Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.0 is published against SDK 1.0.0; verify exact registry versions rather than inferring availability from package metadata.
+Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.1 targets SDK 1.0.0. Install `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
 
 Use Node 20 through 22. Run `npm install --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run lint`, `npm run build` and `npm pack --ignore-scripts`. Offline tests never sign. `npm run smoke` and scaffold `npm run verify` sign bounded live writes and need an authorized funded testnet account.
 
@@ -30,4 +30,3 @@ All instances share a process-wide queue by chain and signer address. Across pro
 
 Operation identities combine content with a monotonically increasing journal sequence. Returning to earlier content after a confirmed transition or reorg is a new operation; replaying the current state still skips. Historical attempts remain immutable. Transaction evidence with zero attempts is contradictory: preserve the lock and reconcile by hash, never resend.
 
-Release status: arkiv-sync@1.0.0 is published for SDK 1.0.0 / Rabdi. This branch prepares 1.0.1; it has not been published. Samples retain their exact registry pins until the phase-2 release sequence.

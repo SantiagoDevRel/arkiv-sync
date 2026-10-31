@@ -1,11 +1,11 @@
 # create-arkiv-sync
 
-Scaffold an EVM event indexer that writes public Arkiv entities to Rabdi, the Web3 database's DB-Chain testnet (chain ID 7794095). The generated project uses `arkiv-sync@1.0.0` and `@arkiv-network/sdk@1.0.0`. Use Node 22.10+ within the 22.x release line to satisfy the SDK prerequisite and the generated project's engine range.
+Scaffold an EVM event indexer that writes public Arkiv entities to Rabdi, the Web3 database's DB-Chain testnet (chain ID 7794095). The generated project uses `arkiv-sync@1.0.1` and `@arkiv-network/sdk@1.0.0`. Use Node 22.10+ within the 22.x release line to satisfy the SDK prerequisite and the generated project's engine range.
 
 ## Create a project
 
 ```sh
-npx create-arkiv-sync@1.0.1 my-indexer
+npx create-arkiv-sync@1.0.2 my-indexer
 cd my-indexer
 npm install --ignore-scripts
 ```
@@ -24,10 +24,10 @@ npm start
 
 `verify` signs bounded real testnet writes and queries them back. `start` runs continuously. Use only public, non-sensitive source data. Configure Entity Expiration explicitly; it does not erase historical bytes or copies. Preserve the generated `.arkiv-sync/` checkpoints and write journal on a durable volume across restarts. Pending or uncertain writes require reconciliation before restarting; never assume a timeout authorizes resubmission.
 
-## Test an unpublished library candidate
+## Test a local library archive
 
 ```sh
-node /absolute/path/to/create-arkiv-sync/index.mjs my-indexer --local /absolute/path/to/arkiv-sync-1.0.0.tgz
+node /absolute/path/to/create-arkiv-sync/index.mjs my-indexer --local /absolute/path/to/arkiv-sync-1.0.1.tgz
 ```
 
 `--local` sets the generated project's `arkiv-sync` dependency to a local tarball or directory. It does not change the SDK dependency or certify registry publication.
@@ -38,4 +38,3 @@ Read the generated `README.md` and `AGENTS.md` before running writes. The [arkiv
 
 Rabdi serves state at the chain head only: use `latest` rather than old block hashes, `safe` or `finalized`. For a revert at the gas limit, retain the transaction evidence and follow the library's gas estimation and bounded retry guidance; successful or uncertain submissions must never be resent automatically.
 
-Published baseline: create-arkiv-sync@1.0.1. This branch prepares documentation patch 1.0.2; do not install it from npm until publication. The scaffold retains arkiv-sync@1.0.0 until the phase-2 pin update.

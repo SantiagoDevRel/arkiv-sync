@@ -12,7 +12,7 @@ metadata:
 
 # Arkiv Sync
 
-Use the library runtime to derive public Arkiv entities from confirmed EVM logs. Arkiv is the Web3 database; the source chain remains canonical. Read the installed package README and AGENTS.md before wiring its config. This recipe targets the 1.0.0 candidate: check registry availability before installing a fixed version.
+Use the library runtime to derive public Arkiv entities from confirmed EVM logs. Arkiv is the Web3 database; the source chain remains canonical. Read the installed package README and AGENTS.md before wiring its config. This recipe targets arkiv-sync 1.0.1: install `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
 
 Ask for source chain/RPC, contract and exact indexed event signatures, backfill range, confirmation policy, a locally configured funded Rabdi testnet signer and an access key. Obtain keys at https://hub.arkiv.network/access-keys and testnet funds at https://hub.arkiv.network/faucet. Never request secret values in chat. `MissingAccessKeyError` must produce the helpful Hub link; do not silently use anonymous RPCs.
 

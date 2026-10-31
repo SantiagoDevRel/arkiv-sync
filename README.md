@@ -2,13 +2,13 @@
 
 Index confirmed EVM contract events into public Arkiv entities on Rabdi, the Web3 database's DB-Chain testnet. The source chain is canonical; the derived view can be rebuilt.
 
-This branch prepares **arkiv-sync 1.0.0** and **create-arkiv-sync 1.0.0** for SDK **1.0.0**. Publication and production promotion require a separate release step. Node 20 through 22 is supported.
+**arkiv-sync 1.0.1** targets SDK **1.0.0** and Rabdi. Node 20 through 22 is supported. Install the runtime with `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
 
 ## Configure
 
 Get a free [access key](https://hub.arkiv.network/access-keys) and fund a throwaway testnet account at the [faucet](https://hub.arkiv.network/faucet). Configure `ARKIV_ACCESS_KEY` and `PRIVATE_KEY` locally; never put their values in prompts, client bundles or Git.
 
-After release, scaffold with `npm create arkiv-sync@1.0.0 my-indexer`, then `npm install --ignore-scripts`, configure `.env` from `.env.example`, and run `npm run verify`. Verification signs bounded real transactions; `npm start` runs the worker continuously. Before release use the scaffolder's `--local /absolute/arkiv-sync-1.0.0.tgz` option.
+For a complete new project, use [create-arkiv-sync 1.0.2](create-arkiv-sync/README.md). Configure the generated `.env` locally. `npm run verify` signs bounded real transactions; `npm start` runs the worker continuously.
 
 ```ts
 import { defineConfig, days, addr, uint } from 'arkiv-sync'
@@ -83,4 +83,3 @@ All instances share a process-wide queue by chain and signer address. Across pro
 
 Operation identities combine content with a monotonically increasing journal sequence. Returning to earlier content after a confirmed transition or reorg is a new operation; replaying the current state still skips. Historical attempts remain immutable. Transaction evidence with zero attempts is contradictory: preserve the lock and reconcile by hash, never resend.
 
-Release status: arkiv-sync@1.0.0 is published for SDK 1.0.0 / Rabdi. This branch prepares 1.0.1; it has not been published. Samples retain their exact registry pins until the phase-2 release sequence.

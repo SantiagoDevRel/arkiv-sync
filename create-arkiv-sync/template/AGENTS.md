@@ -1,6 +1,6 @@
 # Consumer guidance
 
-This project uses arkiv-sync 1.0.0 with SDK 1.0.0 and Rabdi. Use Node 20 through 22, `npm install --ignore-scripts`, `npm run typecheck`, `npm run verify`, then `npm start`. Verification signs real testnet writes.
+This project uses arkiv-sync 1.0.1 with SDK 1.0.0 and Rabdi. Use Node 20 through 22, `npm install --ignore-scripts`, `npm run typecheck`, `npm run verify`, then `npm start`. Verification signs real testnet writes.
 
 Ask for source chain/RPC, contract/event signatures, block range and confirmation policy; a locally configured funded testnet signer; and an access key from https://hub.arkiv.network/access-keys. Fund the address at https://hub.arkiv.network/faucet. Keep credentials outside Git, prompts, logs and browser bundles. Missing access keys fail closed.
 

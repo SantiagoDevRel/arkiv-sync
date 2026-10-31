@@ -11,6 +11,7 @@ const rules = new Map([]);
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const exceptions = JSON.parse(readFileSync(path.join(repoRoot, 'vocabulary-exceptions.json'), 'utf8'));
+const history = JSON.parse(readFileSync(path.join(repoRoot, 'vocabulary-history.json'), 'utf8'));
 const waivers = JSON.parse(readFileSync(path.join(repoRoot, 'vocabulary-waivers.json'), 'utf8'));
 function generated(file) { return ['sample/dist/assets/', 'apps/example/.next/static/', 'apps/example/.next/server/'].some(prefix => file.startsWith(prefix)); }
 function globMatch(file, glob) { return glob.endsWith('/**') && file.startsWith(glob.slice(0,-2)); }
@@ -25,7 +26,9 @@ function waive(file, text) {
 }
 
 /** Only exact compatibility statements are exempt; prose on the same line is checked. */
-export function violations(file, text) {
+export function violations(file, text, parseMap = true) {
+  const archived = history.find(entry => entry.file === file && entry.sha256 === createHash('sha256').update(text).digest('hex'));
+  if (archived) text = text.split(/\r?\n/).map(line => archived.lines.includes(line) ? '' : line).join('\n');
   text = waive(file, text);
   if (generated(file)) {
     const spans=[];
@@ -39,10 +42,21 @@ export function violations(file, text) {
     for(const [start,end] of spans) for(let i=start;i<end;i++) if(original[i]!=='\n') masked[i]=' ';
     text=masked.join('');
   }
-  if (file.endsWith('.map')) {
+  if (parseMap && file.endsWith('.map')) {
     const map = JSON.parse(text);
-    return (map.sourcesContent ?? []).flatMap((source, i) => source == null ? [] :
-      violations(path.posix.normalize(path.posix.join(path.posix.dirname(file), map.sources[i])), source));
+    function inspect(value, fields = []) {
+      if (typeof value === 'string') {
+        const index = fields.length === 2 && fields[0] === 'sourcesContent' ? Number(fields[1]) : -1;
+        const source = index >= 0 ? map.sources?.[index] : undefined;
+        return typeof source === 'string'
+          ? violations(path.posix.normalize(path.posix.join(path.posix.dirname(file), source)), value, false)
+          : violations(file, value, false);
+      }
+      if (Array.isArray(value)) return value.flatMap((entry, index) => inspect(entry, [...fields, String(index)]));
+      if (value && typeof value === 'object') return Object.entries(value).flatMap(([key, entry]) => [...violations(file, key, false), ...inspect(entry, [...fields, key])]);
+      return [];
+    }
+    return inspect(map);
   }
   const allowed = rules.get(file) ?? (file.includes('/dist/') || file.startsWith('dist/') ? rules.get('@generated') ?? [] : []);
   return text.split(/\r?\n/).flatMap((line, i) => {
