@@ -9,13 +9,17 @@ const clean = mkdtempSync(path.join(process.env.TMPDIR, 'sync-registry-'))
 const run = (command, args, cwd = clean) => execFileSync(command, args, { cwd, stdio: 'inherit' })
 const json = file => JSON.parse(readFileSync(file, 'utf8'))
 const expected = {
-  'arkiv-sync': '290009ad4718b84ab56456f6b70e78b85ed2533f0c821efc5b3c89aaeec9b5a1',
-  'create-arkiv-sync': '7cee87b5232dc58672f21575edb6a80ee072401fb017812dbd5563e29ae6a956',
+  'arkiv-sync': '5709c784a220890a74a5ad26763dd476c2c83848ff8e589a0ea8134bce27b5a0',
+  'create-arkiv-sync': '4ba9b855ee78be0bde15ff035f73dfae443928345228ea7a685aff3124c07c74',
+}
+const versions = {
+  'arkiv-sync': json(path.join(root, 'package.json')).version,
+  'create-arkiv-sync': json(path.join(root, 'create-arkiv-sync/package.json')).version,
 }
 const archives = {}
 for (const [name, sha256] of Object.entries(expected)) {
-  run('npm', ['pack', `${name}@1.0.0`, '--ignore-scripts', '--pack-destination', clean])
-  const archive = path.join(clean, `${name}-1.0.0.tgz`)
+  run('npm', ['pack', `${name}@${versions[name]}`, '--ignore-scripts', '--pack-destination', clean])
+  const archive = path.join(clean, `${name}-${versions[name]}.tgz`)
   assert.equal(createHash('sha256').update(readFileSync(archive)).digest('hex'), sha256)
   archives[name] = archive
 }
@@ -24,7 +28,7 @@ run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', archives['
 const target = path.join(clean, 'scaffold')
 run(process.execPath, [path.join(clean, 'node_modules/create-arkiv-sync/index.mjs'), target, '--install'])
 const consumer = json(path.join(target, 'package.json'))
-assert.equal(consumer.dependencies['arkiv-sync'], '1.0.0')
+assert.equal(consumer.dependencies['arkiv-sync'], versions['arkiv-sync'])
 assert.equal(consumer.dependencies['@arkiv-network/sdk'], '1.0.0')
 assert.deepEqual(json(path.join(root, 'create-arkiv-sync/template/package.json')).dependencies, consumer.dependencies)
 const consumerLock = json(path.join(target, 'package-lock.json'))
@@ -40,7 +44,7 @@ assert.match(execFileSync(process.execPath, [cli, '--help'], { cwd: target, enco
 const web = path.join(clean, 'web')
 mkdirSync(web)
 copyFileSync(path.join(root, 'web-demo/package.json'), path.join(web, 'package.json'))
-assert.equal(json(path.join(web, 'package.json')).dependencies['arkiv-sync'], '1.0.0')
+assert.equal(json(path.join(web, 'package.json')).dependencies['arkiv-sync'], versions['arkiv-sync'])
 run('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], web)
 const lock = json(path.join(web, 'package-lock.json'))
 assert.match(lock.packages['node_modules/arkiv-sync'].resolved, /^https:\/\/registry\.npmjs\.org\//)
