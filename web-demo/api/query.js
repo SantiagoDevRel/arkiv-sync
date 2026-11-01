@@ -1,9 +1,11 @@
+import { rejectBrowserRequest } from '../shared/request-guard.js'
 // Read-only: query the DERIVED Arkiv database back out — the headline verb ("queryable database").
-// No writes, no nonce, no GLM, no abuse surface. Owner-scoped to the demo burner (its address is
+// No writes, nonce or GLM. Request checks protect the server read key. Owner-scoped to the demo burner (its address is
 // public; the key is not). Demonstrates that the indexed events are a real queryable view.
-import { createArkivReader, SOURCE_CHAINS, quoteValue, scrubSecrets } from 'arkiv-sync'
+import { createArkivReader, SOURCE_CHAINS, quoteValue } from 'arkiv-sync'
 
 export default async function handler(req, res) {
+  if (rejectBrowserRequest(req, res)) return
   const url = new URL(req.url, 'http://localhost')
   const contract = (url.searchParams.get('contract') || '').trim().toLowerCase()
   const chain = url.searchParams.get('chain') || ''
@@ -29,8 +31,8 @@ export default async function handler(req, res) {
         rows: rows.map((r) => ({ key: r.key, attributes: r.attributes, expiresAtBlock: r.expiresAtBlock })),
       }),
     )
-  } catch (err) {
+  } catch {
     res.statusCode = 400
-    res.end(JSON.stringify({ ok: false, error: scrubSecrets(err) }))
+    res.end(JSON.stringify({ ok: false, error: 'Could not query Rabdi. Retry the read later.', code: 'RABDI_QUERY_FAILED' }))
   }
 }

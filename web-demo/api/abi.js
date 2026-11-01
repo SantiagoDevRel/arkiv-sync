@@ -1,5 +1,6 @@
+import { rejectBrowserRequest } from '../shared/request-guard.js'
 // Resolve a contract's event signatures from its ABI (Sourcify, keyless, multichain), with
-// standard ERC events as fallbacks. Read-only; no key involved.
+// standard ERC events as fallbacks. Read-only; Etherscan optionally uses a server key.
 import { SOURCE_CHAINS } from 'arkiv-sync'
 
 function chainIdOf(chainKey) {
@@ -59,6 +60,7 @@ async function fetchAbiEvents(address, chainId) {
 }
 
 export default async function handler(req, res) {
+  if (rejectBrowserRequest(req, res)) return
   const url = new URL(req.url, 'http://localhost')
   const address = url.searchParams.get('address') || ''
   const chain = url.searchParams.get('chain') || 'sepolia'
@@ -70,8 +72,8 @@ export default async function handler(req, res) {
   try {
     const events = await fetchAbiEvents(address, chainIdOf(chain))
     res.end(JSON.stringify({ ok: true, events }))
-  } catch (err) {
+  } catch {
     res.statusCode = 500
-    res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }))
+    res.end(JSON.stringify({ ok: false, error: 'Could not load contract events. Retry later.', code: 'ABI_LOOKUP_FAILED' }))
   }
 }

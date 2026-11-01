@@ -1,3 +1,4 @@
+import { rejectBrowserRequest } from '../shared/request-guard.js'
 // Bounded, streaming indexer run — the serverless replacement for the long-running worker.
 // ONE request = ONE time-boxed pass: drive `runOnce()` until caught up OR the budget/cap is hit,
 // streaming each onActivity over SSE, then end. No infinite loop → fits Vercel's request model.
@@ -6,7 +7,7 @@
 //   - hard wall-clock budget (under maxDuration) · max writes · max backfill depth · maxEventsPerTick
 //   - best-effort single-flight per warm instance (one run at a time; avoids burner nonce contention)
 // The burner PRIVATE_KEY lives only in the server env — never sent to the browser.
-import { createIndexer, MemoryCursorStore, days, SOURCE_CHAINS, scrubSecrets, WriteReconciliationRequiredError, storageAttributeName } from 'arkiv-sync'
+import { createIndexer, MemoryCursorStore, days, SOURCE_CHAINS, WriteReconciliationRequiredError, storageAttributeName } from 'arkiv-sync'
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/
 const MAX_BACKFILL = 600 // how far back a backfill may scan
@@ -35,6 +36,7 @@ async function headOf(chainKey) {
 }
 
 export default async function handler(req, res) {
+  if (rejectBrowserRequest(req, res)) return
   const url = new URL(req.url, 'http://localhost')
   const contract = (url.searchParams.get('contract') || '').trim()
   const event = (url.searchParams.get('event') || '').trim()
@@ -96,6 +98,8 @@ export default async function handler(req, res) {
     }
 
     const config = {
+      // Provider diagnostics are untrusted; log fixed fields only.
+      logger: Object.fromEntries(['debug', 'info', 'warn', 'error'].map(level => [level, () => console.info({ code: 'INDEXER_ACTIVITY', level })])),
       source: {
         chain,
         contract,
@@ -149,7 +153,7 @@ export default async function handler(req, res) {
     send({ kind: 'control', state: 'stopped', written, reason })
   } catch (err) {
     if (err instanceof WriteReconciliationRequiredError) uncertain = true
-    send({ kind: 'control', state: 'error', message: scrubSecrets(err), txHash: err?.txHash })
+    send({ kind: 'control', state: 'error', message: 'Indexing stopped. Check confirmation before continuing.', code: 'INDEXER_RUN_FAILED', txHash: typeof err?.txHash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(err.txHash) ? err.txHash : undefined })
   } finally {
     busy = false
     stop()
