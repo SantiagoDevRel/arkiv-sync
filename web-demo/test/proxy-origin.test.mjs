@@ -4,6 +4,14 @@ import fs from 'node:fs';
 import {pathToFileURL} from 'node:url';
 const same = {host: 'sample.example', origin: 'https://sample.example', 'content-type': 'application/json'};
 const cases = [
+  ['strict Origin HTTP downgrade', {...same, origin: "http://sample.example"}, 403],
+  ['strict Origin FTP scheme', {...same, origin: "ftp://sample.example"}, 403],
+  ['strict Origin userinfo', {...same, origin: ['https://', 'user', ':', 'password', '@sample.example'].join('')}, 403],
+  ['strict Origin path', {...same, origin: "https://sample.example/path"}, 403],
+  ['strict Origin query', {...same, origin: "https://sample.example?x=1"}, 403],
+  ['strict Origin fragment', {...same, origin: "https://sample.example#part"}, 403],
+  ['strict Origin missing authority slashes', {...same, origin: "https:sample.example"}, 403],
+
   ['foreign JSON origin', {...same, origin: 'https://foreign.example'}, 403],
   ['foreign plain-text origin', {...same, origin: 'https://foreign.example', 'content-type': 'text/plain'}, 403],
   ['same-origin plain text', {...same, 'content-type': 'text/plain'}, 415],
@@ -52,7 +60,7 @@ for(const endpoint of ['query','run','abi']){
  for(const[name,headers]of [['foreign JSON origin',{...same,origin:'https://foreign.example'}],['foreign plain-text origin',{...same,origin:'https://foreign.example','content-type':'text/plain'}],['cross-site without origin',{host:same.host,'sec-fetch-site':'cross-site'}]])test(endpoint+' GET rejects '+name,async()=>{
   const result=await invoke(endpoint,headers,'GET');console.log(JSON.stringify({originCase:endpoint+' GET '+name,expected:403,status:result.status,upstreamCalls:result.calls}));assert.equal(result.calls,0,'rejected request must not reach upstream');assert.equal(result.indexers,0);assert.equal(result.readers,0);assert.equal(result.stream,false);assert.equal(result.status,403);
  });
- for(const[name,headers,method]of [['same-origin JSON',same,'POST'],['JSON with charset',{...same,'content-type':'application/json; charset=utf-8'},'POST'],['origin absent',{host:same.host,'content-type':'application/json'},'POST'],['matching port',{...same,host:'sample.example:444',origin:'https://sample.example:444'},'POST'],['same-origin GET without content type',{host:same.host,origin:same.origin},'GET']])test(endpoint+' allows '+name,async()=>{
+ for(const[name,headers,method]of [['local HTTP localhost',{...same,host:'localhost:17811',origin:'http://localhost:17811'},'POST'],['local HTTP loopback',{...same,host:'127.0.0.1:17811',origin:'http://127.0.0.1:17811'},'GET'],['same-origin JSON',same,'POST'],['JSON with charset',{...same,'content-type':'application/json; charset=utf-8'},'POST'],['origin absent',{host:same.host,'content-type':'application/json'},'POST'],['matching port',{...same,host:'sample.example:444',origin:'https://sample.example:444'},'POST'],['same-origin GET without content type',{host:same.host,origin:same.origin},'GET']])test(endpoint+' allows '+name,async()=>{
   const result=await invoke(endpoint,headers,method);assert.equal(result.status,200);assert.equal(result.calls,endpoint==='query'?1:2);if(endpoint==='run'){assert.equal(result.indexers,1);assert.match(result.body,/"state":"stopped"/);}else assert.equal(result.indexers,0);
  });
 }
