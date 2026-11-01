@@ -1,3 +1,4 @@
+import { rejectBrowserRequest } from '../shared/request-guard.js'
 // Resolve a contract's event signatures from its ABI (Sourcify, keyless, multichain), with
 // standard ERC events as fallbacks. Read-only; no key involved.
 import { SOURCE_CHAINS } from 'arkiv-sync'
@@ -59,6 +60,7 @@ async function fetchAbiEvents(address, chainId) {
 }
 
 export default async function handler(req, res) {
+  if (rejectBrowserRequest(req, res)) return
   const url = new URL(req.url, 'http://localhost')
   const address = url.searchParams.get('address') || ''
   const chain = url.searchParams.get('chain') || 'sepolia'

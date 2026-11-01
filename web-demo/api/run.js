@@ -1,3 +1,4 @@
+import { rejectBrowserRequest } from '../shared/request-guard.js'
 // Bounded, streaming indexer run — the serverless replacement for the long-running worker.
 // ONE request = ONE time-boxed pass: drive `runOnce()` until caught up OR the budget/cap is hit,
 // streaming each onActivity over SSE, then end. No infinite loop → fits Vercel's request model.
@@ -35,6 +36,7 @@ async function headOf(chainKey) {
 }
 
 export default async function handler(req, res) {
+  if (rejectBrowserRequest(req, res)) return
   const url = new URL(req.url, 'http://localhost')
   const contract = (url.searchParams.get('contract') || '').trim()
   const event = (url.searchParams.get('event') || '').trim()
