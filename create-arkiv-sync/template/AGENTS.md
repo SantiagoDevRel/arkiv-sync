@@ -6,7 +6,7 @@ Ask for source chain/RPC, contract/event signatures, block range and confirmatio
 
 Keep the library's source adapters, atomic cursor, reorg detector and owner/schema/sync-isolated upserts. Identity is chainId:txHash:logIndex plus SHA256 content hash. Store rich JSON in data (unindexed bytes); scalar mapper columns are typed and indexed with snake_case names. Reject reserved names/collisions; exact big integers stay strings in read DTOs.
 
-Configure expirationSeconds as a positive multiple of two seconds, shorter than 7,884,000 Rabdi blocks. Changed entities replace mapped content while preserving Entity Expiration unless extendOnUpdate explicitly requests Lifetime Extension.
+Configure expirationSeconds as a positive multiple of two seconds, shorter than 7,884,000 Rabdi blocks for SDK 1.0.0 compatibility. Direct SDK 1.0.1+ calls can use ExpirationTime.max(); the indexer keeps its numeric-duration policy. Changed entities replace mapped content while preserving Entity Expiration unless extendOnUpdate explicitly requests Lifetime Extension.
 
 Reads require owner scope, typed literals and quoteValue. query is one page; queryAll bounds pages and fails on head drift, duplicate keys or budget overflow. Sort client-side; never add orderBy. Rabdi only serves head state: use latest, never safe/finalized/old hashes.
 
