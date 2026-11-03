@@ -313,7 +313,7 @@ export class ArkivSink implements Sink {
           catch (error) { if ((error as Error).name === 'TransactionReceiptNotFoundError') return null; throw error }
         },
         // A hash alone is insufficient: SDK also throws after successful receipts it cannot decode.
-        confirmedRevertHash: error => error instanceof EntityMutationError && /reverted/i.test(error.message) ? error.txHash : undefined,
+        confirmedRevertHash: error => error instanceof EntityMutationError && /\breverted\b|ran out of gas:/i.test(error.message) ? error.txHash : undefined,
         errorHash: error => error instanceof EntityMutationError ? error.txHash : undefined,
       })
     } catch (cause) {

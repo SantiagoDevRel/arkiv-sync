@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Verify the SDK ^1.0.0 peer range with 1.0.1; update exact development and consumer SDK pins and current guidance.
+- Recognize the updated SDK out-of-gas diagnostic while retaining authoritative receipt checks and the single-retry limit.
+- Guard stale SDK guidance while preserving dated evidence and compatibility contracts.
+
 ## 1.0.1
 
 - Clarify versioned runtime installation and archive verification; guard source-map metadata.

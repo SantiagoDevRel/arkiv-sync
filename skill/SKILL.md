@@ -6,13 +6,13 @@ metadata:
   arkiv.skill-version: "2.0.0"
   arkiv.npm-package: "arkiv-sync"
   arkiv.sdk-range: "^1.0.0"
-  arkiv.sdk-verified: "1.0.0"
+  arkiv.sdk-verified: "1.0.1"
   arkiv.network-fingerprint: "rabdi:7794095"
 ---
 
 # Arkiv Sync
 
-Use the library runtime to derive public Arkiv entities from confirmed EVM logs. Arkiv is the Web3 database; the source chain remains canonical. Read the installed package README and AGENTS.md before wiring its config. This recipe targets arkiv-sync 1.0.1: install `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
+Use the library runtime to derive public Arkiv entities from confirmed EVM logs. Arkiv is the Web3 database; the source chain remains canonical. Read the installed package README and AGENTS.md before wiring its config. This recipe targets arkiv-sync 1.0.2: install `npm install --save-exact arkiv-sync@1.0.2 @arkiv-network/sdk@1.0.1`.
 
 Ask for source chain/RPC, contract and exact indexed event signatures, backfill range, confirmation policy, a locally configured funded Rabdi testnet signer and an access key. Obtain keys at https://hub.arkiv.network/access-keys and testnet funds at https://hub.arkiv.network/faucet. Never request secret values in chat. `MissingAccessKeyError` must produce the helpful Hub link; do not silently use anonymous RPCs.
 
@@ -42,7 +42,7 @@ Every write uses explicit gas/gasPrice and nonce at latest. Encode through the S
 
 Keep one WriteOperation state instance for each operation across clicks/re-renders: guard sending before network calls. SDK success stores submitted(hash) before looking up its receipt; no subsequent outcome may resend. Null/disagreeing lookup is confirmation pending, with hash. Uncertain errors require checking before retrying. Only an SDK-confirmed revert plus an authoritative reverted receipt with gasUsed == sent gas can retry once; re-estimate latest and double gas within the half-block ceiling. All other reverts terminate. Preserve the hash and durable input/progress journal; reconcile before restart.
 
-Entity Expiration uses positive multiples of two seconds. Rabdi lifetime must be shorter than 7,884,000 blocks; longer-lived entities require Lifetime Extension before expiration. Never promise an unlimited lifetime. Testnet resets require idempotent reseeding from a fixed source range.
+Entity Expiration uses positive multiples of two seconds. The library retains lifetimes shorter than 7,884,000 blocks for SDK 1.0.0 compatibility; direct SDK 1.0.1+ calls can use ExpirationTime.max(), which is not an expirationSeconds value; longer-lived entities require Lifetime Extension before expiration. Never promise an unlimited lifetime. Testnet resets require idempotent reseeding from a fixed source range.
 
 Troubleshoot `arkiv serves state at the chain head only` by reading latest instead of safe/finalized/old hashes. A revert at exactly the gas limit needs estimate/headroom and the bounded retry rule above. Keep access keys server-side for shared read proxies; browser wallet writers use their own configured RPC. AI integrations use the phrase "ephemeral coordination state".
 

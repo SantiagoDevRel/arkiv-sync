@@ -1,11 +1,11 @@
 # create-arkiv-sync
 
-Scaffold an EVM event indexer that writes public Arkiv entities to Rabdi, the Web3 database's DB-Chain testnet (chain ID 7794095). The generated project uses `arkiv-sync@1.0.1` and `@arkiv-network/sdk@1.0.0`. Use Node 22.10+ within the 22.x release line to satisfy the SDK prerequisite and the generated project's engine range.
+Scaffold an EVM event indexer that writes public Arkiv entities to Rabdi, the Web3 database's DB-Chain testnet (chain ID 7794095). The generated project uses `arkiv-sync@1.0.2` and `@arkiv-network/sdk@1.0.1`. Use Node 22.10+ within the 22.x release line to satisfy the SDK prerequisite and the generated project's engine range.
 
 ## Create a project
 
 ```sh
-npx create-arkiv-sync@1.0.2 my-indexer
+npx create-arkiv-sync@1.0.3 my-indexer
 cd my-indexer
 npm install --ignore-scripts
 ```
@@ -27,7 +27,7 @@ npm start
 ## Test a local library archive
 
 ```sh
-node /absolute/path/to/create-arkiv-sync/index.mjs my-indexer --local /absolute/path/to/arkiv-sync-1.0.1.tgz
+node /absolute/path/to/create-arkiv-sync/index.mjs my-indexer --local /absolute/path/to/arkiv-sync-1.0.2.tgz
 ```
 
 `--local` sets the generated project's `arkiv-sync` dependency to a local tarball or directory. It does not change the SDK dependency or certify registry publication.

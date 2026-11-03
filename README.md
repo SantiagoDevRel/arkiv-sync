@@ -2,13 +2,13 @@
 
 Index confirmed EVM contract events into public Arkiv entities on Rabdi, the Web3 database's DB-Chain testnet. The source chain is canonical; the derived view can be rebuilt.
 
-**arkiv-sync 1.0.1** targets SDK **1.0.0** and Rabdi. Node 20 through 22 is supported. Install the runtime with `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
+**arkiv-sync 1.0.2** uses SDK **^1.0.0, verified with 1.0.1** and Rabdi. Node 20 through 22 is supported. Install the runtime with `npm install --save-exact arkiv-sync@1.0.2 @arkiv-network/sdk@1.0.1`.
 
 ## Configure
 
 Get a free [access key](https://hub.arkiv.network/access-keys) and fund a throwaway testnet account at the [faucet](https://hub.arkiv.network/faucet). Configure `ARKIV_ACCESS_KEY` and `PRIVATE_KEY` locally; never put their values in prompts, client bundles or Git.
 
-For a complete new project, use [create-arkiv-sync 1.0.2](create-arkiv-sync/README.md). Configure the generated `.env` locally. `npm run verify` signs bounded real transactions; `npm start` runs the worker continuously.
+For a complete new project, use [create-arkiv-sync 1.0.3](create-arkiv-sync/README.md). Configure the generated `.env` locally. `npm run verify` signs bounded real transactions; `npm start` runs the worker continuously.
 
 ```ts
 import { defineConfig, days, addr, uint } from 'arkiv-sync'
@@ -53,7 +53,7 @@ Every create, patch, Lifetime Extension and reorg cleanup is encoded through the
 
 An operation keeps a `WriteOperation` instance across calls: `sending` -> `submitted(hash)` -> confirmed or confirmation pending. SDK success never re-enters the send path, even if a subsequent receipt lookup is null or disagrees. Uncertain transport failures stop writes. A confirmed reverted SDK error may retry **once**, only after authoritative receipt gas usage equals the sent gas limit, and a fresh estimate plus doubled gas still fits the half-block ceiling. All other reverts stop. Preserve any hash and reconcile before restarting; a new process does not prove an old write failed. The default file journal persists operation state beside the checkpoint; preserve its durable volume across restarts.
 
-`expirationSeconds` and `SinkRecord.expiresInSeconds` use positive multiples of two seconds, nominally converted to blocks. Rabdi's maximum lifetime is 7,884,000 blocks; this library requires a shorter duration. Patches preserve existing Entity Expiration unless `extendOnUpdate: true` explicitly adds Lifetime Extension. Entities needing a longer life must be extended before expiration. There is no unlimited lifetime or erasure guarantee.
+`expirationSeconds` and `SinkRecord.expiresInSeconds` use positive multiples of two seconds, nominally converted to blocks. Rabdi's maximum lifetime is 7,884,000 blocks from inclusion. This library retains a shorter numeric duration for SDK 1.0.0 compatibility across its peer range. Direct SDK 1.0.1+ calls can use `ExpirationTime.max()` for the longest lifetime; that helper is not an `expirationSeconds` value. Patches preserve existing Entity Expiration unless `extendOnUpdate: true` explicitly adds Lifetime Extension. Entities needing a longer life must be extended before expiration. There is no unlimited lifetime or erasure guarantee.
 
 Troubleshooting: `arkiv serves state at the chain head only` means use `latest`, rather than old block hashes, `safe` or `finalized`. A receipt reverted at exactly the gas limit indicates gas exhaustion; use the estimate/headroom rule and the bounded state machine above. `MissingAccessKeyError` links to the Hub instead of silently using an anonymous endpoint.
 

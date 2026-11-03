@@ -1,0 +1,21 @@
+name: SDK compatibility
+on:
+  push:
+    branches: [rabdi/sdk-101-20261103]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: bash scripts/verify-sdk101.sh
+        env:
+          TMPDIR: ${{ runner.temp }}

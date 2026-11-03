@@ -7,7 +7,7 @@ import config from './arkiv.config.js'
  * indexes it into Arkiv, and queries it back. Confirms your PRIVATE_KEY, funding, RPCs, contract,
  * and event signatures are all correct before you leave the worker running.
  */
-const r = await quickCheck(config)
+const r = await quickCheck(config, { maxEvents: 1 })
 
 if (!r.ok) {
   console.error(`✗ verify failed: ${r.reason ?? `wrote ${r.written}, queried ${r.queried}`}`)

@@ -1,4 +1,4 @@
-/** Real SDK 1.0.0 clients and ABI encoding, deterministic in-memory RPC only; no network/keys. */
+/** Real SDK ^1.0.0 clients, verified with 1.0.1, and ABI encoding, deterministic in-memory RPC only; no network/keys. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { ENTITY_EVENTS_ABI } from '@arkiv-network/sdk'
@@ -308,4 +308,4 @@ await test('maximum lifetime is refused before any request or send',async()=>{
   await assert.rejects(f.sink().write({...record('lifetime'),expiresInSeconds:7_884_000*2}),/maxLifetime/)
   assert.equal(f.requests.length,0)
 })
-console.log(JSON.stringify({status:'PASS',sdk:'1.0.0',tests:outcomes.length,outcomes,networkRequests:0,realBroadcasts:0,keysAccessed:false,scope:'SDK transport/ABI fixtures only; funded Rabdi E2E is separate'}))
+console.log(JSON.stringify({status:'PASS',sdk:process.env.SDK_TEST_VERSION ?? '1.0.1',tests:outcomes.length,outcomes,networkRequests:0,realBroadcasts:0,keysAccessed:false,scope:'SDK transport/ABI fixtures only; funded Rabdi E2E is separate'}))

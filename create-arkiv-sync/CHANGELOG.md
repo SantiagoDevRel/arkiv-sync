@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+
+- Verify the SDK ^1.0.0 peer range with 1.0.1; update exact development and consumer SDK pins and current guidance.
+- Guard stale SDK guidance while preserving dated evidence and compatibility contracts.
+
 ## 1.0.2
 
 - Pin generated projects to arkiv-sync 1.0.1 and clarify exact scaffolder installation.

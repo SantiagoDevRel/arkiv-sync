@@ -1,12 +1,12 @@
 {
   "name": "arkiv-sync",
   "version": "2.0.0",
-  "title": "Chain \u2192 Arkiv Indexer",
-  "oneLiner": "Point at any EVM contract and turn its events into a queryable Arkiv database \u2014 reorg-safe, idempotent, resumable.",
+  "title": "Chain → Arkiv Indexer",
+  "oneLiner": "Point at any EVM contract and turn its events into a queryable Arkiv database — reorg-safe, idempotent, resumable.",
   "teaches": [
     "indexing EVM events into Arkiv",
     "declarative contract+event config",
-    "event \u2192 entity mapping",
+    "event → entity mapping",
     "reorg-safe re-derivation",
     "idempotency by chainId:txHash:logIndex",
     "querying the derived database",
@@ -14,14 +14,14 @@
   ],
   "npm": {
     "package": "arkiv-sync",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "bin": "arkiv-sync",
     "create": "create-arkiv-sync"
   },
   "sdk": {
     "package": "@arkiv-network/sdk",
     "range": "^1.0.0",
-    "verified": "1.0.0"
+    "verified": "1.0.1"
   },
   "viem": {
     "range": "^2.38.2",
@@ -104,6 +104,6 @@
     "lead": "the Web3 database",
     "ai-vertical": "ephemeral coordination state"
   },
-  "last-verified-at": "2026-10-31",
+  "last-verified-at": "2026-11-03",
   "evidence": "See docs/verification.md; candidate verification and publication are separate."
 }

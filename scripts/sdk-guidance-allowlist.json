@@ -1,0 +1,30 @@
+{
+  "history": [],
+  "lines": [
+    {
+      "file": "CHANGELOG.md",
+      "literal": "- Target SDK 1.0.0 and Rabdi with a required access key, schema-typed columns and per-column indexing.",
+      "reason": "Historical version entry; retained verbatim."
+    },
+    {
+      "file": "README.md",
+      "literal": "`expirationSeconds` and `SinkRecord.expiresInSeconds` use positive multiples of two seconds, nominally converted to blocks. Rabdi's maximum lifetime is 7,884,000 blocks from inclusion. This library retains a shorter numeric duration for SDK 1.0.0 compatibility across its peer range. Direct SDK 1.0.1+ calls can use `ExpirationTime.max()` for the longest lifetime; that helper is not an `expirationSeconds` value. Patches preserve existing Entity Expiration unless `extendOnUpdate: true` explicitly adds Lifetime Extension. Entities needing a longer life must be extended before expiration. There is no unlimited lifetime or erasure guarantee.",
+      "reason": "Current library policy explicitly scopes the conservative cap to peer-baseline compatibility and distinguishes the direct SDK maximum helper."
+    },
+    {
+      "file": "AGENTS.md",
+      "literal": "- `expirationSeconds` is a positive multiple of two seconds. The library's numeric duration stays below 7,884,000 blocks for SDK 1.0.0 compatibility. Direct SDK 1.0.1+ calls can use ExpirationTime.max(); this library retains its numeric-duration policy. Changed entity patches explicitly unset old fields and preserve expiration; only `extendOnUpdate` adds Lifetime Extension. No unlimited lifetime.",
+      "reason": "Current library policy explicitly scopes the conservative cap to peer-baseline compatibility and distinguishes the direct SDK maximum helper."
+    },
+    {
+      "file": "skill/SKILL.md",
+      "literal": "Entity Expiration uses positive multiples of two seconds. The library retains lifetimes shorter than 7,884,000 blocks for SDK 1.0.0 compatibility; direct SDK 1.0.1+ calls can use ExpirationTime.max(), which is not an expirationSeconds value; longer-lived entities require Lifetime Extension before expiration. Never promise an unlimited lifetime. Testnet resets require idempotent reseeding from a fixed source range.",
+      "reason": "Current library policy explicitly scopes the conservative cap to peer-baseline compatibility and distinguishes the direct SDK maximum helper."
+    },
+    {
+      "file": "create-arkiv-sync/template/AGENTS.md",
+      "literal": "Configure expirationSeconds as a positive multiple of two seconds, shorter than 7,884,000 Rabdi blocks for SDK 1.0.0 compatibility. Direct SDK 1.0.1+ calls can use ExpirationTime.max(); the indexer keeps its numeric-duration policy. Changed entities replace mapped content while preserving Entity Expiration unless extendOnUpdate explicitly requests Lifetime Extension.",
+      "reason": "Current library policy explicitly scopes the conservative cap to peer-baseline compatibility and distinguishes the direct SDK maximum helper."
+    }
+  ]
+}

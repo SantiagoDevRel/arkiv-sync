@@ -8,4 +8,4 @@ The hosted demo is read-only. A separately authorized writer requires ENABLE_DEM
 
 Retain the existing static UI for this dependency-restricted migration. Keep all visible text English and verify three widths plus empty/error states. Credentials must never enter HTML, client requests, errors or screenshots. .vercelignore excludes local secrets.
 
-The sample and scaffold template pin exact registry arkiv-sync 1.0.1 and SDK 1.0.0. Do not vendor package archives. Verify the published archives and a clean registry consumer with scripts/verify-registry-dgx.sh.
+The sample pins registry arkiv-sync 1.0.1; the scaffold targets arkiv-sync 1.0.2. Both pin SDK 1.0.1 exactly. Do not vendor package archives. Verify the published archives and a clean registry consumer with scripts/verify-registry-dgx.sh.

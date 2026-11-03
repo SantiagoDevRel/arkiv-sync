@@ -12,7 +12,8 @@ const expected = {
   'arkiv-sync': '5709c784a220890a74a5ad26763dd476c2c83848ff8e589a0ea8134bce27b5a0',
   'create-arkiv-sync': '4ba9b855ee78be0bde15ff035f73dfae443928345228ea7a685aff3124c07c74',
 }
-const versions = {
+const baseline = process.argv.includes('--published-baseline')
+const versions = baseline ? { 'arkiv-sync': '1.0.1', 'create-arkiv-sync': '1.0.2' } : {
   'arkiv-sync': json(path.join(root, 'package.json')).version,
   'create-arkiv-sync': json(path.join(root, 'create-arkiv-sync/package.json')).version,
 }
@@ -20,7 +21,9 @@ const archives = {}
 for (const [name, sha256] of Object.entries(expected)) {
   run('npm', ['pack', `${name}@${versions[name]}`, '--ignore-scripts', '--pack-destination', clean])
   const archive = path.join(clean, `${name}-${versions[name]}.tgz`)
-  assert.equal(createHash('sha256').update(readFileSync(archive)).digest('hex'), sha256)
+  const dist = JSON.parse(execFileSync('npm', ['view', `${name}@${versions[name]}`, 'dist', '--json'], { encoding: 'utf8' }))
+  assert.equal('sha512-' + createHash('sha512').update(readFileSync(archive)).digest('base64'), dist.integrity)
+  if (baseline) assert.equal(createHash('sha256').update(readFileSync(archive)).digest('hex'), sha256)
   archives[name] = archive
 }
 writeFileSync(path.join(clean, 'package.json'), JSON.stringify({ name: 'sync-registry-certification', private: true, type: 'module' }))
@@ -29,8 +32,9 @@ const target = path.join(clean, 'scaffold')
 run(process.execPath, [path.join(clean, 'node_modules/create-arkiv-sync/index.mjs'), target, '--install'])
 const consumer = json(path.join(target, 'package.json'))
 assert.equal(consumer.dependencies['arkiv-sync'], versions['arkiv-sync'])
-assert.equal(consumer.dependencies['@arkiv-network/sdk'], '1.0.0')
-assert.deepEqual(json(path.join(root, 'create-arkiv-sync/template/package.json')).dependencies, consumer.dependencies)
+if (baseline) run('npm', ['install', '--save-exact', '--ignore-scripts', '--no-audit', '--no-fund', '@arkiv-network/sdk@1.0.1'], target)
+else assert.deepEqual(json(path.join(root, 'create-arkiv-sync/template/package.json')).dependencies, consumer.dependencies)
+assert.equal(json(path.join(target, 'node_modules/@arkiv-network/sdk/package.json')).version, '1.0.1')
 const consumerLock = json(path.join(target, 'package-lock.json'))
 assert.match(consumerLock.packages['node_modules/arkiv-sync'].resolved, /^https:\/\/registry\.npmjs\.org\//)
 run('npm', ['run', 'typecheck'], target)
@@ -57,7 +61,7 @@ for (const file of ['build.mjs', 'index.html']) copyFileSync(path.join(root, 'we
 run('npm', ['run', 'build'], web)
 assert.deepEqual(readFileSync(path.join(web, 'public/index.html')), readFileSync(path.join(root, 'web-demo/index.html')))
 mkdirSync(path.join(root, 'artifacts'), { recursive: true })
-const result = { status: 'PASS', node: process.version, registrySha256: expected,
+const result = { status: 'PASS', node: process.version, registrySha256: Object.fromEntries(Object.entries(archives).map(([name, file]) => [name, createHash('sha256').update(readFileSync(file)).digest('hex')])), baseline,
   scaffoldRegistryPins: true, scaffoldTypecheck: true, scaffoldBuild: true,
   packedCliCheck: true, packedCliHelp: true, demoRegistryPin: true, demoBuild: true }
 writeFileSync(path.join(root, 'artifacts/registry-verification.json'), JSON.stringify(result, null, 2) + '\n')

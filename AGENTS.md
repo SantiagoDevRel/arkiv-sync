@@ -1,6 +1,6 @@
 # arkiv-sync contributor and consumer guidance
 
-Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.1 targets SDK 1.0.0. Install `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
+Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.2 uses SDK ^1.0.0, verified with 1.0.1. Install `npm install --save-exact arkiv-sync@1.0.2 @arkiv-network/sdk@1.0.1`.
 
 Use Node 20 through 22. Run `npm install --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run lint`, `npm run build` and `npm pack --ignore-scripts`. Offline tests never sign. `npm run smoke` and scaffold `npm run verify` sign bounded live writes and need an authorized funded testnet account.
 
@@ -10,7 +10,7 @@ Preserve these invariants:
 - Identity `chainId:txHash:logIndex`, SHA256 content hashing, owner/schema/sync isolation and atomic persisted checkpoints. Storage version changes refuse old cursors.
 - Index source head minus confirmations. Reorgs roll back to the ancestor, re-derive and remove only this worker's orphaned entities using `sink.reconcile`. Source RPC errors throw rather than pretending a block vanished.
 - Schema `arkiv_sync_v1` uses indexed system and scalar mapper columns. Names map to lowercase snake_case; reject collisions and reserved names. Rich JSON is stored in unindexed `data: bytes()`, never filtered directly. Exact big integers remain strings in DTOs.
-- `expirationSeconds` is a positive multiple of two seconds. Rabdi duration must be below 7,884,000 blocks. Changed entity patches explicitly unset old fields and preserve expiration; only `extendOnUpdate` adds Lifetime Extension. No unlimited lifetime.
+- `expirationSeconds` is a positive multiple of two seconds. The library's numeric duration stays below 7,884,000 blocks for SDK 1.0.0 compatibility. Direct SDK 1.0.1+ calls can use ExpirationTime.max(); this library retains its numeric-duration policy. Changed entity patches explicitly unset old fields and preserve expiration; only `extendOnUpdate` adds Lifetime Extension. No unlimited lifetime.
 - Every write uses explicit gas/gasPrice and latest nonce. Encode with the SDK, estimate unsigned at latest, gas >= max(1_000_000, 2 * estimate); never exceed half the head gas limit. Split batches before sending. Estimate failure stops admission; caller overrides cannot bypass ceilings.
 - Preserve one WriteOperation per user operation. SDK success stores submitted(hash) before receipt lookup and never sends again. Null/disagreeing lookup means pending. Uncertain errors block. Retry once only for SDK-confirmed revert plus authoritative reverted receipt with gasUsed == sent gas, with fresh latest estimate and doubled gas within half-block ceiling. Preserve hashes and a durable input/progress journal before restarting.
 - One exclusive writer per account/process. Coordinate other processes separately; batch size is a policy, not a measured capacity promise.
