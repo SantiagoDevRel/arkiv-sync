@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      TMPDIR: ${{ runner.temp }}
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
@@ -18,3 +17,5 @@ jobs:
         with:
           node-version: '22'
       - run: bash scripts/verify-sdk101.sh
+        env:
+          TMPDIR: ${{ runner.temp }}

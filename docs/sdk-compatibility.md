@@ -1,6 +1,6 @@
 # SDK compatibility
 
-arkiv-sync uses SDK `^1.0.0`, verified with 1.0.1. Development and sample SDK installs are pinned to 1.0.1. Run `bash scripts/verify-sdk101.sh` on Node 22. The checks exercise both ends of the tested peer range and restore the 1.0.1 installation and lockfiles exactly.
+arkiv-sync uses SDK `^1.0.0`, verified with 1.0.1. Development and sample SDK installs are pinned to 1.0.1. Run `bash scripts/verify-sdk101.sh` on Node 22. The checks exercise versions 1.0.0 and 1.0.1 and restore the 1.0.1 installation and lockfiles exactly.
 
 On 1.0.1, over-maximum Entity Expiration throws `InvalidExpiryError` before submission. The original peer baseline instead sends and reverts on chain with `ExpiryBeyondMaxLifetime`. The deterministic transport checks distinguish these paths without making live over-limit writes. On 1.0.1+, use `ExpirationTime.max()` for the longest lifetime, counted from the inclusion block. Conservative application caps remain for compatibility with the peer baseline; they do not redefine the protocol maximum.
 
