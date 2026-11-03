@@ -6,6 +6,7 @@ npm run typecheck
 npm test
 npm run lint
 npm run build
+node --test scripts/isolated-checkout.test.mjs
 node scripts/sdk-runtime-check.mjs
 node scripts/pack-candidate.mjs
 node scripts/verify-registry.mjs --published-baseline
