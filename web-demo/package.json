@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@arkiv-network/sdk": "1.0.1",
-    "arkiv-sync": "1.0.1",
+    "arkiv-sync": "1.0.2",
     "viem": "2.57.3"
   }
 }
