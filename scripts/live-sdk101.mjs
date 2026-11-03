@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { selectLiveJournal } from './live-journal-path.mjs';
 import { ArkivSink, createArkivReader, quoteValue, silentLogger, scrubSecrets } from '../dist/index.js';
 import { createPublicClient } from '@arkiv-network/sdk';
 import { rabdi } from '@arkiv-network/sdk/chains';
@@ -8,6 +9,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 
 const evidence = { sdk: '1.0.1', transactions: [], queriesKeyA: 0 };
 try {
+  const journalDirectory = selectLiveJournal();
   const account = privateKeyToAccount(process.env.TEST_SYNC_PRIVATE_KEY);
   assert.equal(account.address.toLowerCase(), process.env.TEST_SYNC_ADDRESS.toLowerCase());
   const accessKey = process.env.ARKIV_ACCESS_KEY_A, chain = rabdi({ accessKey });
@@ -25,7 +27,7 @@ try {
   const pub = createPublicClient({ chain, transport });
   assert.equal(await pub.getChainId(), 7794095);
   const eventId = 'pkg3b-sdk101-' + Date.now(), sync = eventId;
-  const sink = new ArkivSink({ account, accessKey, transport, logger: silentLogger, journalDirectory: 'artifacts/sdk101-roundtrip-journal' });
+  const sink = new ArkivSink({ account, accessKey, transport, logger: silentLogger, journalDirectory });
   const record = { eventId, attributes: [{ key: 'sync', value: sync }], data: { purpose: 'SDK compatibility check' }, expiresInSeconds: 3600 };
   const written = await sink.write(record);
   assert.equal(written.op, 'create');

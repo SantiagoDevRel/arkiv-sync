@@ -52,7 +52,10 @@ export function withIsolatedCheckout(callback, { checkout = process.cwd(), prefi
   try {
     fs.cpSync(root, copy, { recursive: true, filter: source => {
       const relative = path.relative(root, source);
-      if (relative.split(path.sep).some(part => excluded.has(part))) return false;
+      const parts = relative.split(path.sep);
+      if (parts.some(part => excluded.has(part) || part.startsWith('.env') || part === '.arkiv-sync')) return false;
+      if (parts.some((part, index) => part === 'artifacts' && /journal/i.test(parts[index + 1] ?? ''))) return false;
+      if (parts.some((part, index) => part === '.candidate-artifacts' && (parts[index + 1] === 'live-sdk101-runs' || /^live-sdk101(?:\.reconciled)?\.json$/.test(parts[index + 1] ?? '')))) return false;
       assert(!fs.lstatSync(source).isSymbolicLink(), `Included source must not link back to the checkout: ${relative}`);
       return true;
     } });

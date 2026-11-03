@@ -1,3 +1,4 @@
+import './live-journal-path.test.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -92,4 +93,20 @@ test('included source symlinks cannot expose the original checkout to copied too
   assert.throws(() => withIsolatedCheckout(() => { called = true; }, { checkout }), /must not link back/);
   assert.equal(called, false);
   assertCheckoutUnchanged(checkout, before);
+}));
+
+
+test('temporary copies omit environment files and live journals while preserving original custody', () => fixture(({ checkout }) => {
+  const omitted = ['.env', '.env.local', '.env.example', 'nested/.env.test', '.arkiv-sync/pending.json', 'nested/.arkiv-sync/pending.json', 'artifacts/sdk101-roundtrip-journal/pending.json', 'artifacts/scaffold-live-journal/pending.json', '.candidate-artifacts/live-sdk101-runs/run/000001.json', '.candidate-artifacts/live-sdk101.json'];
+  const retained = ['artifacts/pack.json', 'nested/ordinary.txt'];
+  for (const file of [...omitted, ...retained]) {
+    const target = path.join(checkout, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, 'synthetic fixture only');
+  }
+  const before = snapshotCheckout(checkout);
+  withIsolatedCheckout(({ root }) => {
+    for (const file of omitted) assert(!fs.existsSync(path.join(root, file)), 'must not copy ' + file);
+    for (const file of retained) assert(fs.existsSync(path.join(root, file)), 'ordinary evidence remains available: ' + file);
+  }, { checkout });
+  assertCheckoutUnchanged(checkout, before);
+  console.log(JSON.stringify({ sensitiveCopyExclusions: omitted.length, originalCustodyUnchanged: true, ordinaryArtifactsRetained: true }));
 }));
