@@ -1,8 +1,8 @@
-// Historical 1.0.0 artifact verification only; current patch validation uses the manifest version and separate phase-1 evidence.
+// Verify current packed runtime/scaffolder without publication. Registry sample remains independently pinned.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const root = process.cwd()
@@ -11,8 +11,8 @@ mkdirSync(artifacts, { recursive: true })
 const run = (command, args, cwd = root, env = process.env) => execFileSync(command, args, { cwd, env, stdio: 'inherit' })
 run('npm', ['pack', '--ignore-scripts', '--pack-destination', artifacts])
 run('npm', ['pack', '--ignore-scripts', '--pack-destination', artifacts], path.join(root, 'create-arkiv-sync'))
-const runtime = path.join(artifacts, 'arkiv-sync-1.0.0.tgz')
-const scaffolder = path.join(artifacts, 'create-arkiv-sync-1.0.0.tgz')
+const runtime = path.join(artifacts, `arkiv-sync-${JSON.parse(readFileSync('package.json')).version}.tgz`)
+const scaffolder = path.join(artifacts, `create-arkiv-sync-${JSON.parse(readFileSync('create-arkiv-sync/package.json')).version}.tgz`)
 const clean = mkdtempSync(path.join(process.env.TMPDIR, 'sync-consumer-'))
 writeFileSync(path.join(clean, 'package.json'), JSON.stringify({ name: 'sync-packed-consumer', private: true, type: 'module' }))
 run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', scaffolder], clean)
@@ -41,11 +41,14 @@ assert.equal(refused.status, 1)
 assert.deepEqual(readFileSync(path.join(target, 'README.md')), readme)
 const live = process.argv.includes('--live')
 if (live) {
-  run(process.execPath, ['scripts/live-rabdi.mjs'])
-  run(process.execPath, ['scripts/seed-rabdi.mjs'])
-  run(process.execPath, ['scripts/seed-rabdi.mjs'])
+  // One bounded generated-consumer verification; the round-trip check is separate.
   const env = { ...process.env, PRIVATE_KEY: process.env.TEST_SYNC_PRIVATE_KEY, ARKIV_ACCESS_KEY: process.env.ARKIV_ACCESS_KEY_A }
-  run('npm', ['run', 'verify'], target, env)
+  try {
+    run('npm', ['run', 'verify'], target, env)
+    run(process.execPath, [path.join(root, 'scripts/cleanup-sdk101.mjs'), target], target, env)
+  } finally {
+    if (existsSync(path.join(target, '.arkiv-sync'))) cpSync(path.join(target, '.arkiv-sync'), path.join(artifacts, 'scaffold-live-journal'), { recursive: true })
+  }
 }
 // The hosted demo consumes the exact published registry version independently of this pack.
 const web = path.join(clean, 'web')
@@ -54,15 +57,16 @@ copyFileSync(path.join(root, 'web-demo/package.json'), path.join(web, 'package.j
 run('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], web)
 run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], web)
 const webLock = JSON.parse(readFileSync(path.join(web, 'package-lock.json'), 'utf8'))
-const registryDist = JSON.parse(execFileSync('npm', ['view', 'arkiv-sync@1.0.0', 'dist', '--json'], { encoding: 'utf8' }))
+const registryDist = JSON.parse(execFileSync('npm', ['view', `arkiv-sync@${JSON.parse(readFileSync('web-demo/package.json')).dependencies['arkiv-sync']}`, 'dist', '--json'], { encoding: 'utf8' }))
 assert.equal(webLock.packages['node_modules/arkiv-sync'].integrity, registryDist.integrity)
 assert.match(webLock.packages['node_modules/arkiv-sync'].resolved, /^https:\/\/registry\.npmjs\.org\//)
-copyFileSync(path.join(web, 'package-lock.json'), path.join(root, 'web-demo/package-lock.json'))
+assert.deepEqual(JSON.parse(readFileSync(path.join(root, 'web-demo/package-lock.json'))), webLock, 'Committed registry sample lock must match')
 copyFileSync(path.join(root, 'web-demo/build.mjs'), path.join(web, 'build.mjs'))
 copyFileSync(path.join(root, 'web-demo/index.html'), path.join(web, 'index.html'))
 run('npm', ['run', 'build'], web)
 assert.deepEqual(readFileSync(path.join(web, 'public/index.html')), readFileSync(path.join(web, 'index.html')))
 mkdirSync(path.join(web, 'api'))
+cpSync(path.join(root, 'web-demo/shared'), path.join(web, 'shared'), { recursive: true })
 for (const name of ['query', 'run', 'config', 'chains', 'abi']) copyFileSync(path.join(root, `web-demo/api/${name}.js`), path.join(web, `api/${name}.js`))
 const { default: queryHandler } = await import(new URL('file://' + path.join(web, 'api/query.js')))
 const { default: runHandler } = await import(new URL('file://' + path.join(web, 'api/run.js')))
@@ -83,6 +87,21 @@ try {
   if (saved !== undefined) process.env.ENABLE_DEMO_WRITES = saved
   assert.equal(calls, 0)
 } finally { globalThis.fetch = originalFetch }
+// Prepare the sample against the new archive independently of its committed registry pin.
+const candidateWeb = path.join(clean, 'web-candidate')
+cpSync(web, candidateWeb, { recursive: true, filter: source => !source.split(path.sep).includes('node_modules') })
+run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', runtime], candidateWeb)
+assert.equal(JSON.parse(readFileSync(path.join(candidateWeb, 'node_modules/arkiv-sync/package.json'))).version,
+  JSON.parse(readFileSync(path.join(root, 'package.json'))).version)
+run('npm', ['run', 'build'], candidateWeb)
+run(process.execPath, ['--input-type=module', '-e', `
+  import assert from 'node:assert/strict';
+  globalThis.fetch=async()=>{throw Error('Rejected requests must never reach the network')};
+  const {default:query}=await import('./api/query.js');
+  const response={statusCode:200,setHeader(){},writeHead(){},end(){}};
+  await query({url:'/api/query?contract=invalid&chain=sepolia'},response);
+  assert.equal(response.statusCode,400);
+`], candidateWeb)
 const hashes = Object.fromEntries([runtime, scaffolder].map(file => [path.basename(file), createHash('sha256').update(readFileSync(file)).digest('hex')]))
 writeFileSync(path.join(artifacts, live ? 'packed-live.json' : 'packed-offline.json'), JSON.stringify({ status: 'PASS', node: process.version,
   hashes, scaffoldTypecheck: true, cleanConsumer: true, packedCli: true, nonemptyTargetRefused: true, live }, null, 2) + '\n')

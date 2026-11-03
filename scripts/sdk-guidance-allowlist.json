@@ -1,0 +1,10 @@
+{
+  "history": [],
+  "lines": [
+    {
+      "file": "CHANGELOG.md",
+      "literal": "- Target SDK 1.0.0 and Rabdi with a required access key, schema-typed columns and per-column indexing.",
+      "reason": "Historical version entry; retained verbatim."
+    }
+  ]
+}

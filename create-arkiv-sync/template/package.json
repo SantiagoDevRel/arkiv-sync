@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "arkiv-sync": "1.0.1",
-    "@arkiv-network/sdk": "1.0.0"
+    "arkiv-sync": "1.0.2",
+    "@arkiv-network/sdk": "1.0.1"
   },
   "devDependencies": {
     "@types/node": "22.19.21",

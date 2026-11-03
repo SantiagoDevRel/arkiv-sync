@@ -1,6 +1,6 @@
 {
   "name": "arkiv-sync",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Index EVM contract events into Arkiv with configurable sources, checkpointed progress, and reorg recovery.",
   "type": "module",
   "main": "dist/index.js",
@@ -28,10 +28,11 @@
   "scripts": {
     "start": "tsx src/bin/cli.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "test": "tsx test/run.ts && tsx test/review-regressions.ts && tsx test/missing-key-no-network.ts && tsx test/write-operation.ts",
+    "test": "tsx test/run.ts && tsx test/review-regressions.ts && tsx test/missing-key-no-network.ts && tsx test/write-operation.ts && tsx test/sdk101-regression.ts",
     "typecheck": "tsc --noEmit",
     "build": "node build.mjs",
-    "lint": "node scripts/lint.mjs"
+    "lint": "node scripts/lint.mjs && node scripts/sdk-guidance-guard.mjs",
+    "guard:sdk": "node scripts/sdk-guidance-guard.mjs"
   },
   "keywords": [
     "arkiv",
@@ -55,7 +56,7 @@
     "viem": "2.57.3"
   },
   "devDependencies": {
-    "@arkiv-network/sdk": "1.0.0",
+    "@arkiv-network/sdk": "1.0.1",
     "@types/node": "22.19.21",
     "esbuild": "0.24.2",
     "tsx": "4.22.4",

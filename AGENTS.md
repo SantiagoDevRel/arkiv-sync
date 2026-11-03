@@ -1,6 +1,6 @@
 # arkiv-sync contributor and consumer guidance
 
-Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.1 targets SDK 1.0.0. Install `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
+Reads confirmed source EVM logs and writes a derived view as public Arkiv entities. The source chain is canonical. Version 1.0.2 uses SDK ^1.0.0, verified with 1.0.1. Install `npm install --save-exact arkiv-sync@1.0.2 @arkiv-network/sdk@1.0.1`.
 
 Use Node 20 through 22. Run `npm install --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run lint`, `npm run build` and `npm pack --ignore-scripts`. Offline tests never sign. `npm run smoke` and scaffold `npm run verify` sign bounded live writes and need an authorized funded testnet account.
 

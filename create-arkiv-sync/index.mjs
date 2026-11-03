@@ -2,7 +2,7 @@
 /**
  * create-arkiv-sync — scaffold a chain→Arkiv indexer.
  *
- *   npm create arkiv-sync@1.0.2 my-indexer
+ *   npm create arkiv-sync@1.0.3 my-indexer
  *   # or:  node index.mjs <dir> [--local <path-to-arkiv-sync-tgz-or-dir>] [--install]
  *
  * Copies the template, names the project, and (optionally) installs. `--local` points the

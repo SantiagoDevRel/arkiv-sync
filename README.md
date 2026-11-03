@@ -2,13 +2,13 @@
 
 Index confirmed EVM contract events into public Arkiv entities on Rabdi, the Web3 database's DB-Chain testnet. The source chain is canonical; the derived view can be rebuilt.
 
-**arkiv-sync 1.0.1** targets SDK **1.0.0** and Rabdi. Node 20 through 22 is supported. Install the runtime with `npm install --save-exact arkiv-sync@1.0.1 @arkiv-network/sdk@1.0.0`.
+**arkiv-sync 1.0.2** uses SDK **^1.0.0, verified with 1.0.1** and Rabdi. Node 20 through 22 is supported. Install the runtime with `npm install --save-exact arkiv-sync@1.0.2 @arkiv-network/sdk@1.0.1`.
 
 ## Configure
 
 Get a free [access key](https://hub.arkiv.network/access-keys) and fund a throwaway testnet account at the [faucet](https://hub.arkiv.network/faucet). Configure `ARKIV_ACCESS_KEY` and `PRIVATE_KEY` locally; never put their values in prompts, client bundles or Git.
 
-For a complete new project, use [create-arkiv-sync 1.0.2](create-arkiv-sync/README.md). Configure the generated `.env` locally. `npm run verify` signs bounded real transactions; `npm start` runs the worker continuously.
+For a complete new project, use [create-arkiv-sync 1.0.3](create-arkiv-sync/README.md). Configure the generated `.env` locally. `npm run verify` signs bounded real transactions; `npm start` runs the worker continuously.
 
 ```ts
 import { defineConfig, days, addr, uint } from 'arkiv-sync'

@@ -50,7 +50,7 @@ export interface ArkivSyncConfig {
    * `attributes` become queryable fields; `data` overrides the stored data.
    */
   map?: EventMapper
-  /** Override the sink. Default: SDK 1.0.0 Rabdi, signing locally with PRIVATE_KEY from env. */
+  /** Override the sink. Default: SDK ^1.0.0 (verified with 1.0.1), Rabdi, signing locally with PRIVATE_KEY from env. */
   sink?: Sink
   /** Arkiv network the sink writes to (the SINK target — NOT the source chain). Default: Rabdi testnet.
    *  When Arkiv mainnet launches, the swap is this one field (+ allowMainnet). */
