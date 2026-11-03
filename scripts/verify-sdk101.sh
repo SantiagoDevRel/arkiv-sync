@@ -9,7 +9,7 @@ npm run build
 node --test scripts/isolated-checkout.test.mjs scripts/vocabulary-build-check.test.mjs
 node scripts/sdk-runtime-check.mjs
 node scripts/pack-candidate.mjs
-node scripts/verify-registry.mjs --published-baseline
+node scripts/verify-registry.mjs
 node scripts/sdk-peer-check.mjs
 node scripts/sdk-guidance-mutation.mjs
 node scripts/inspect-pack.mjs
